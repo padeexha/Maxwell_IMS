@@ -754,6 +754,12 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
   let currentSize = '50x30';
   const isBatch = units.length > 1;
 
+  let printServerOnline = false;
+  try {
+    const res = await fetch('http://127.0.0.1:5001/printers', { signal: AbortSignal.timeout(500) });
+    if (res.ok) printServerOnline = true;
+  } catch {}
+
   const renderPreview = async size => {
     const cards = await Promise.all(units.map(u => generateStickerHtml(u, size)));
     return cards.join('');
@@ -762,9 +768,15 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
   const initialPreview = await renderPreview(currentSize);
 
   const content = `
+    <div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <span class="eyebrow">Label Output</span>
+      <span class="badge ${printServerOnline ? 'available' : ''}" style="font-size:11px;">
+        ${printServerOnline ? '● Local Print Server Online (Port 5001)' : '○ Print Server Offline'}
+      </span>
+    </div>
     <p class="dialog-description">
       ${isBatch ? `Ready to print labels for <strong>${units.length} physical units</strong>.` : `Standard thermal barcode sticker with scannable QR code for <strong>${esc(units[0].code)}</strong>.`}
-      Optimized for thermal label printers and standard printer sheets. No external print server required.
+      Supports direct thermal ZPL printing (Port 5001) as well as native browser print.
     </p>
     <div class="print-preview-box">
       <div class="print-preview-list" id="preview-stickers-list">
@@ -772,6 +784,7 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
       </div>
     </div>
     <form class="form-grid" id="sticker-print-form">
+      ${formError}
       ${field(
         'Label size & format',
         'labelSize',
@@ -788,9 +801,16 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
         false,
         'Number of sticker copies per unit.'
       )}
-      <div class="form-actions">
+      <div class="form-actions" style="flex-wrap:wrap;">
         <button type="button" class="btn secondary" data-action="cancel">Close</button>
-        <button type="submit" class="btn primary">${icon('printer')}Print ${isBatch ? `${units.length} Stickers` : 'Sticker'}</button>
+        ${
+          printServerOnline
+            ? `<button type="button" class="btn secondary" id="send-direct-thermal-btn">
+                ${icon('printer')}Direct Thermal (Port 5001)
+              </button>`
+            : ''
+        }
+        <button type="submit" class="btn primary">${icon('printer')}Browser Print / PDF</button>
       </div>
     </form>
   `;
@@ -804,6 +824,38 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
       const updated = await renderPreview(currentSize);
       const listEl = $('#preview-stickers-list', dialog);
       if (listEl) listEl.innerHTML = updated;
+    };
+  }
+
+  const directBtn = $('#send-direct-thermal-btn', dialog);
+  if (directBtn) {
+    directBtn.onclick = async () => {
+      directBtn.disabled = true;
+      const origText = directBtn.innerHTML;
+      directBtn.innerHTML = '<span class="loading-indicator"></span> Sending…';
+      try {
+        const labels = units.map(u => ({
+          name: product(u.productId)?.name || 'Stock item',
+          barcode: u.code
+        }));
+        const res = await fetch('http://127.0.0.1:5001/print', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ labels })
+        });
+        const text = await res.text();
+        if (res.ok) {
+          toast(text || 'ZPL print job sent to thermal printer.');
+          closeDialog();
+        } else {
+          showError(`Print server response: ${text}`);
+        }
+      } catch (err) {
+        showError(`Could not reach print server: ${err.message}`);
+      } finally {
+        directBtn.disabled = false;
+        directBtn.innerHTML = origText;
+      }
     };
   }
 

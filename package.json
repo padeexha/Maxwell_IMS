@@ -6,7 +6,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "node scripts/check-env.js && vite build",
     "preview": "vite preview",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "print-server": "python3 scripts/print_server.py"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.0.0",
