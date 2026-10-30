@@ -855,6 +855,12 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
       ${isBatch ? `Ready to print labels for <strong>${units.length} physical units</strong>.` : `Standard thermal barcode sticker with scannable QR code for <strong>${esc(units[0].code)}</strong>.`}
       Supports direct thermal ZPL printing (Port 5001) as well as native browser print.
     </p>
+    <div id="thermal-printer-choice" class="field" style="display:none;margin:12px 0;">
+      <label for="thermal-printer-select">Printer for direct thermal labels</label>
+      <select id="thermal-printer-select">
+        <option value="">Use Windows default printer</option>
+      </select>
+    </div>
     <div class="print-preview-box">
       <div class="print-preview-list" id="preview-stickers-list">
         ${initialPreview}
@@ -906,6 +912,8 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
   const statusBadge = $('#print-server-status', dialog);
   const connectBtn = $('#connect-print-server-btn', dialog);
   const directBtn = $('#send-direct-thermal-btn', dialog);
+  const printerChoice = $('#thermal-printer-choice', dialog);
+  const printerSelect = $('#thermal-printer-select', dialog);
 
   if (connectBtn) {
     connectBtn.onclick = async () => {
@@ -935,6 +943,11 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
           directBtn.style.display = '';
           directBtn.innerHTML = `${icon('printer')}${printers.length ? 'Direct Thermal (Port 5001)' : 'Direct Thermal Test (Virtual)'}`;
         }
+        if (printerChoice && printerSelect) {
+          printerSelect.replaceChildren(new Option('Use Windows default printer', ''));
+          printers.forEach(name => printerSelect.add(new Option(name, name)));
+          printerChoice.style.display = printers.length ? '' : 'none';
+        }
         connectBtn.textContent = 'Reconnect';
       } catch (err) {
         printServerOnline = false;
@@ -962,6 +975,7 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
         }));
         const payload = {
           labels,
+          printer: printerSelect?.value || '',
           virtual: availablePrinters.length === 0
         };
         const request = new Request('http://127.0.0.1:5001/print', {
