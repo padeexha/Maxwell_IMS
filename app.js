@@ -138,6 +138,32 @@ function renderOverview() {
   const total = Math.max(1, m.total);
   const max = Math.max(1, ...counts.values());
 
+  const isWorker = user?.role === 'Worker';
+  const headerAction = access().receive
+    ? button('Receive stock', 'receive')
+    : `<button class="btn primary" data-action="scan-to-sell">${icon('camera')}Scan QR to Sell</button>`;
+
+  const workerHero = isWorker
+    ? `<section class="worker-hero-panel">
+        <div class="worker-hero-content">
+          <div class="worker-hero-icon">${icon('scan')}</div>
+          <div class="worker-hero-text">
+            <span class="worker-hero-eyebrow">Point of Sale Terminal</span>
+            <h2>Scan QR Code to Sell Item</h2>
+            <p>Use your camera or handheld barcode scanner to read the thermal sticker on any physical item and complete a sale instantly.</p>
+          </div>
+        </div>
+        <div class="worker-hero-actions">
+          <button class="btn btn-hero-sell" data-action="scan-to-sell">
+            ${icon('camera')} Scan QR to Sell Item
+          </button>
+          <button class="btn btn-hero-manual" data-action="manual-lookup">
+            ${icon('search')} Enter Code Manually
+          </button>
+        </div>
+      </section>`
+    : '';
+
   const metric = (label, value, foot, symbol, cls = '') =>
     `<article class="metric ${cls}">
       <div class="metric-top"><span>${label}</span>${icon(symbol)}</div>
@@ -147,17 +173,18 @@ function renderOverview() {
 
   return (
     header(
-      'Inventory overview',
-      'Current stock balance, catalogue valuation, and items requiring attention.',
-      access().receive ? button('Receive stock', 'receive') : ''
+      isWorker ? 'Sales & Floor Terminal' : 'Inventory overview',
+      isWorker ? 'Scan product QR stickers to record sales and track available stock.' : 'Current stock balance, catalogue valuation, and items requiring attention.',
+      headerAction
     ) +
+    workerHero +
     `<div class="metric-grid">
       ${metric('Available units', m.Available, '<span class="dot"></span>Ready for dispatch or sale', 'box')}
-      ${metric('Available stock value', money(m.value), 'Current valuation at catalogue prices', 'wallet', 'value')}
+      ${!isWorker ? metric('Available stock value', money(m.value), 'Current valuation at catalogue prices', 'wallet', 'value') : metric('Total inventory units', m.total, 'Physical units registered', 'layers')}
       ${metric('Sold units', m.Sold, 'Total items marked as sold', 'arrow')}
       ${metric('In repair', m.Repair, 'Awaiting return to available inventory', 'repair')}
-    </div>
-    <div class="overview-grid">
+    </div>` +
+    `<div class="overview-grid">
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -1179,29 +1206,152 @@ function accessModal(id) {
   };
 }
 
-function lookup() {
-  openDialog(
-    'Find or scan an item',
-    'Lookup & Scanner',
-    `<p class="dialog-description">Enter an inventory code or manufacturer serial number. You can also scan with a handheld scanner or camera.</p>
-    <form class="lookup-form">
-      <div class="field">
-        <label for="lookup-code">Inventory code or serial number</label>
-        <input id="lookup-code" name="code" autocomplete="off" required placeholder="e.g. MSM-8F4A7C or serial number" />
+function sellItemModal(id) {
+  const u = db.units.find(u => u.id === id);
+  if (!u) return;
+  const p = product(u.productId);
+
+  if (u.status === 'Sold') {
+    openDialog(
+      'Item Already Sold',
+      'Stock Status',
+      `<div class="sell-item-banner">
+        <span class="badge sold" style="font-size:12px;margin-bottom:8px;">Already Sold</span>
+        <h3 style="margin:0 0 4px 0;font-size:18px;">${esc(p?.name || 'Stock Item')}</h3>
+        <p style="margin:0 0 8px 0;color:var(--muted);">${esc([p?.brand, p?.model, p?.category].filter(Boolean).join(' · '))}</p>
+        <div class="detail-code" style="justify-content:center;margin-bottom:12px;">
+          <code>${esc(u.code)}</code>
+        </div>
+        <p class="notice" style="margin:0;width:100%;">This unit was marked as SOLD${u.soldAt ? ` on ${date(u.soldAt)}` : ''}.</p>
       </div>
-      <button class="btn primary" type="submit">Find item</button>
-    </form>
-    <div style="margin-top:14px">${formError}</div>
-    <div class="scan-buttons">${button('Scan with camera', 'camera', 'secondary', 'camera')}</div>
-    <div class="scanner-area" hidden>
+      <div class="form-actions" style="margin-top:20px;display:flex;justify-content:space-between;width:100%;">
+        <button type="button" class="btn secondary" data-action="scan-to-sell">${icon('camera')} Scan Next Item</button>
+        <button type="button" class="btn subtle" data-action="confirm-transition" data-id="${esc(u.id)}" data-status="Available">${icon('refresh')} Return to Stock</button>
+      </div>`
+    );
+    return;
+  }
+
+  if (u.status === 'Repair') {
+    openDialog(
+      'Item Under Repair',
+      'Stock Status',
+      `<div class="sell-item-banner">
+        <span class="badge repair" style="font-size:12px;margin-bottom:8px;">In Repair</span>
+        <h3 style="margin:0 0 4px 0;font-size:18px;">${esc(p?.name || 'Stock Item')}</h3>
+        <p style="margin:0 0 8px 0;color:var(--muted);">${esc([p?.brand, p?.model, p?.category].filter(Boolean).join(' · '))}</p>
+        <div class="detail-code" style="justify-content:center;margin-bottom:12px;">
+          <code>${esc(u.code)}</code>
+        </div>
+        <p class="notice warning" style="margin:0;width:100%;">This item is currently undergoing repair and cannot be sold.</p>
+      </div>
+      <div class="form-actions" style="margin-top:20px;display:flex;justify-content:flex-end;width:100%;">
+        <button type="button" class="btn primary" data-action="scan-to-sell">${icon('camera')} Scan Next Item</button>
+      </div>`
+    );
+    return;
+  }
+
+  // Unit is Available -> Show high-impact SELL confirmation
+  openDialog(
+    'Confirm Sale',
+    'Point of Sale',
+    `<div class="sell-item-banner">
+      <span class="badge available" style="font-size:12px;margin-bottom:8px;">Ready to Sell</span>
+      <h3 style="margin:0 0 4px 0;font-size:20px;font-weight:700;">${esc(p?.name || 'Stock Item')}</h3>
+      <p style="margin:0 0 10px 0;color:var(--muted);font-size:14px;">${esc([p?.brand, p?.model, p?.category].filter(Boolean).join(' · '))}</p>
+      <div class="detail-code" style="justify-content:center;margin-bottom:14px;">
+        <code style="font-size:14px;font-weight:700;letter-spacing:0.02em;">${esc(u.code)}</code>
+        <button class="icon-button" data-action="copy" data-code="${esc(u.code)}" aria-label="Copy code" title="Copy code">${icon('copy')}</button>
+      </div>
+      <div class="sell-price-box">
+        <span class="sell-price-label">Catalogue Price</span>
+        <strong class="sell-price-value">${money(p?.unitValue)}</strong>
+      </div>
+      ${u.serial ? `<p style="margin:10px 0 0 0;font-size:12px;color:var(--muted);">Serial Number: <strong>${esc(u.serial)}</strong></p>` : ''}
+    </div>
+    <form class="form-grid" style="margin-top:18px;">
+      ${formError}
+      <div class="form-actions" style="width:100%;display:flex;justify-content:space-between;gap:12px;">
+        <button type="button" class="btn secondary" data-action="scan-to-sell">Cancel / Scan Another</button>
+        <button class="btn primary" type="submit" style="background:var(--green);border-color:var(--green);font-size:16px;font-weight:700;padding:12px 24px;">
+          ${icon('check')} Complete Sale (Mark as Sold)
+        </button>
+      </div>
+    </form>`
+  );
+
+  $('form', dialog).onsubmit = async e => {
+    e.preventDefault();
+    const ok = await mutate('transition', { id: u.id, status: 'Sold', version: u.version }, `Item ${u.code} marked as SOLD.`);
+    if (ok) {
+      openDialog(
+        'Sale Completed',
+        'Success',
+        `<div class="sell-item-banner" style="border-color:var(--green-border);background:var(--green-bg);">
+          <span class="badge sold" style="font-size:13px;margin-bottom:8px;">✓ Item Marked as Sold</span>
+          <h3 style="margin:0 0 4px 0;font-size:20px;font-weight:700;color:var(--green-text);">${esc(p?.name || 'Stock Item')}</h3>
+          <p style="margin:0 0 10px 0;color:var(--muted);">${esc(u.code)}</p>
+          <div class="sell-price-box" style="background:#ffffff;border-color:var(--green-border);">
+            <span class="sell-price-label">Sold Value</span>
+            <strong class="sell-price-value">${money(p?.unitValue)}</strong>
+          </div>
+        </div>
+        <div class="form-actions" style="margin-top:20px;display:flex;justify-content:space-between;width:100%;">
+          <button type="button" class="btn secondary" data-action="cancel">Done</button>
+          <button type="button" class="btn-hero-sell" data-action="scan-to-sell" style="font-size:15px;padding:12px 24px;">
+            ${icon('camera')} Scan Next Item
+          </button>
+        </div>`
+      );
+    }
+  };
+}
+
+function lookupSellResult(value) {
+  const unit = findUnit(db.units, value);
+  if (!unit) {
+    showError(`No stock unit found matching “${value}”. Verify the code or barcode, or refresh inventory.`);
+    return false;
+  }
+  stopCamera();
+  sellItemModal(unit.id);
+  return true;
+}
+
+function lookup(mode = 'find', autoStartCamera = false) {
+  const isSelling = mode === 'sell';
+  openDialog(
+    isSelling ? 'Scan QR to Sell' : 'Find or scan an item',
+    isSelling ? 'Point of Sale' : 'Lookup & Scanner',
+    `<p class="dialog-description">
+      ${isSelling ? 'Point your camera or barcode scanner gun at the sticker QR code to sell the item.' : 'Enter an inventory code or manufacturer serial number. You can also scan with a handheld scanner or camera.'}
+    </p>
+    <div class="scanner-area" ${autoStartCamera ? '' : 'hidden'}>
       <video class="scanner-video" playsinline muted></video>
       <p class="scanner-hint" role="status">Starting camera…</p>
+    </div>
+    <form class="lookup-form" style="margin-top:14px;">
+      <div class="field">
+        <label for="lookup-code">${isSelling ? 'Scanned Code or Serial Number' : 'Inventory code or serial number'}</label>
+        <input id="lookup-code" name="code" autocomplete="off" required placeholder="e.g. MSM-8F4A7C or scan with barcode gun" />
+      </div>
+      <button class="btn primary" type="submit">${isSelling ? 'Find & Sell' : 'Find item'}</button>
+    </form>
+    <div style="margin-top:14px">${formError}</div>
+    <div class="scan-buttons" style="margin-top:12px;">
+      ${button(autoStartCamera ? 'Restart camera' : 'Scan with camera', 'camera', 'secondary', 'camera')}
     </div>`
   );
   $('form', dialog).onsubmit = e => {
     e.preventDefault();
-    lookupResult(new FormData(e.target).get('code'));
+    const val = new FormData(e.target).get('code');
+    if (isSelling) lookupSellResult(val);
+    else lookupResult(val);
   };
+  if (autoStartCamera) {
+    startCamera();
+  }
   $('#lookup-code')?.focus();
 }
 
@@ -1276,7 +1426,12 @@ async function startCamera() {
         if (generation !== cameraGeneration || !dialog.open) return;
         if (code && code !== lastCode) {
           lastCode = code;
-          if (lookupResult(code)) return;
+          const isSelling = $('#dialog-title')?.textContent?.includes('Sell');
+          if (isSelling) {
+            if (lookupSellResult(code)) return;
+          } else {
+            if (lookupResult(code)) return;
+          }
         }
       } catch {
         hint.textContent = 'Scanning frame… Hold steady, or type the code above.';
@@ -1390,6 +1545,8 @@ async function onAction(event) {
   if (action === 'add-product') addProduct();
   if (action === 'edit-product') editProduct(id);
   if (action === 'delete-product') deleteProduct(id);
+  if (action === 'scan-to-sell') lookup('sell', true);
+  if (action === 'manual-lookup') lookup('sell', false);
   if (action === 'receive') receiveModal(id);
   if (action === 'value') valueModal(id);
   if (action === 'unit') unitModal(id);
@@ -1451,7 +1608,7 @@ function bind() {
   $('#find-item').innerHTML = icon('scan') + 'Find / Scan';
   $('#find-item').setAttribute('aria-label', 'Find or scan an item');
 
-  $('#find-item').onclick = lookup;
+  $('#find-item').onclick = () => lookup(user?.role === 'Worker' ? 'sell' : 'find', false);
   $('#open-menu').onclick = openDrawer;
   $('#close-menu').onclick = closeDrawer;
   $('#drawer-scrim').onclick = closeDrawer;

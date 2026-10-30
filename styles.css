@@ -1330,6 +1330,220 @@ td .table-actions .text-button {
 }
 
 /* ==========================================================================
+   Worker Sales Hero & Point of Sale Styles
+   ========================================================================== */
+
+.worker-hero-panel {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  color: #ffffff;
+  border-radius: var(--radius-xl);
+  padding: 30px 28px;
+  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  box-shadow: 0 12px 30px -6px rgba(15, 23, 42, 0.25), 0 4px 12px -2px rgba(15, 23, 42, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  position: relative;
+  overflow: hidden;
+}
+
+.worker-hero-panel::before {
+  content: "";
+  position: absolute;
+  top: -60px;
+  right: -60px;
+  width: 280px;
+  height: 280px;
+  background: radial-gradient(circle, rgba(37, 99, 235, 0.35) 0%, rgba(37, 99, 235, 0) 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.worker-hero-content {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  position: relative;
+  z-index: 1;
+}
+
+.worker-hero-icon {
+  width: 68px;
+  height: 68px;
+  border-radius: var(--radius-xl);
+  background: rgba(37, 99, 235, 0.25);
+  border: 1.5px solid rgba(96, 165, 250, 0.5);
+  color: #60a5fa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 4px 16px rgba(37, 99, 235, 0.25);
+}
+
+.worker-hero-icon svg {
+  width: 36px;
+  height: 36px;
+}
+
+.worker-hero-text h2 {
+  font-size: 26px;
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0 0 6px 0;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+.worker-hero-text p {
+  color: #cbd5e1;
+  font-size: 15px;
+  margin: 0;
+  max-width: 640px;
+  line-height: 1.5;
+}
+
+.worker-hero-eyebrow {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #38bdf8;
+  margin-bottom: 6px;
+}
+
+.worker-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
+.btn-hero-sell {
+  background: #059669;
+  color: #ffffff !important;
+  border: none;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 15px 30px;
+  border-radius: var(--radius-lg);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 6px 20px rgba(5, 150, 105, 0.45);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  letter-spacing: -0.01em;
+}
+
+.btn-hero-sell:hover {
+  background: #047857;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(5, 150, 105, 0.55);
+}
+
+.btn-hero-sell:active {
+  transform: translateY(0);
+}
+
+.btn-hero-sell svg {
+  width: 22px;
+  height: 22px;
+}
+
+.btn-hero-manual {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 15px 24px;
+  border-radius: var(--radius-lg);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+
+.btn-hero-manual:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.sell-item-banner {
+  background: var(--surface-subtle);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.sell-price-box {
+  background: var(--green-bg);
+  border: 1px solid var(--green-border);
+  border-radius: var(--radius-md);
+  padding: 10px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: 10px;
+  width: 100%;
+  max-width: 280px;
+}
+
+.sell-price-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--green-text);
+}
+
+.sell-price-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--green-text);
+  font-family: var(--font-sans);
+}
+
+@media (max-width: 640px) {
+  .worker-hero-panel {
+    padding: 24px 20px;
+    gap: 18px;
+  }
+  .worker-hero-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .worker-hero-icon {
+    width: 54px;
+    height: 54px;
+  }
+  .worker-hero-icon svg {
+    width: 28px;
+    height: 28px;
+  }
+  .worker-hero-text h2 {
+    font-size: 22px;
+  }
+  .btn-hero-sell, .btn-hero-manual {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ==========================================================================
    Team & Provisioning
    ========================================================================== */
 
