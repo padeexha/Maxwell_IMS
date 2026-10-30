@@ -1,30 +1,42 @@
 import { createClient } from '@supabase/supabase-js';
-export const mode = import.meta.env.VITE_DATA_MODE;
-if (!['demo','supabase'].includes(mode)) throw Error('Set VITE_DATA_MODE in .env.local; see README.');
-export const hosted = mode === 'supabase';
-export const client = hosted ? createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY) : null;
+export const hosted = import.meta.env.VITE_DATA_MODE === 'supabase';
+const mode = import.meta.env.VITE_DATA_MODE;
+const url = import.meta.env.VITE_SUPABASE_URL;
+const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+export let configurationError = '';
+export let client = null;
+try {
+  if (!['demo','supabase'].includes(mode)) throw Error('The app configuration is missing. Contact the administrator.');
+  if (hosted) {
+    if(!url || !key) throw Error('The database connection is not configured. Contact the administrator.');
+    client = createClient(url,key);
+  }
+} catch(error) { configurationError = error.message; }
 export async function command(action, payload) {
- const {data,error}=await client.rpc('inventory_command',{action,payload});
- if(error) throw error;
- return data;
+  const {data,error} = await client.rpc('inventory_command',{action,payload});
+  if(error) throw error;
+  return data;
 }
 async function rows(table) {
- // Explicit pagination avoids Supabase's default 1,000-row truncation.
- const all=[];
- for(let start=0;;start+=500){
-  const {data,error}=await client.from(table).select('*').order('id').range(start,start+499);
-  if(error) throw error;
-  all.push(...data); if(data.length<500) return all;
- }
+  const all=[];
+  for(let start=0;;start+=500){
+    const {data,error}=await client.from(table).select('*').order('id').range(start,start+499);
+    if(error) throw error;
+    all.push(...data); if(data.length<500) return all;
+  }
 }
 export async function snapshot() {
- const {data:{user},error}=await client.auth.getUser();
- if(error){if(error.name==='AuthSessionMissingError')throw Error('Sign in to access your inventory.');throw error;}
- if(!user) throw Error('Please sign in.');
- const {data:profile,error:profileError}=await client.from('profiles').select('*').eq('id',user.id).single();
- if(profileError || !profile?.active) throw Error('Your account has no active staff access. Contact an administrator.');
- const [products,units,activities,users]=await Promise.all(['products','units','activities','profiles'].map(rows));
- users.forEach(u=>u.initials=u.name.split(' ').map(x=>x[0]).slice(0,2).join(''));
- activities.sort((a,b)=>b.at.localeCompare(a.at));
- return {db:{products,units,activities,users},profile};
+  const {data:{user},error}=await client.auth.getUser();
+  if(error){ if(error.name==='AuthSessionMissingError') throw Object.assign(Error('Sign in to access your inventory.'),{code:'SIGNED_OUT'}); throw error; }
+  if(!user) throw Object.assign(Error('Sign in to access your inventory.'),{code:'SIGNED_OUT'});
+  const {data:profile,error:profileError}=await client.from('profiles').select('*').eq('id',user.id).maybeSingle();
+  if(profileError) throw profileError;
+  if(!profile?.active) throw Object.assign(Error('Your account has no active staff access. Ask your administrator to provision your current account.'),{code:'NO_ACCESS'});
+  const [products,units,activities,users]=await Promise.all(['products','units','activities','profiles'].map(rows));
+  // Recheck access after reads so a revocation mid-refresh cannot produce a partial, misleading view.
+  const {data:latest,error:latestError}=await client.from('profiles').select('*').eq('id',user.id).maybeSingle();
+  if(latestError) throw latestError;
+  if(!latest?.active || latest.role!==profile.role) throw Object.assign(Error('Your access changed. Sign in again to continue.'),{code:'NO_ACCESS'});
+  activities.sort((a,b)=>b.at.localeCompare(a.at));
+  return {db:{products,units,activities,users},profile:latest};
 }

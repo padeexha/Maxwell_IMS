@@ -1,0 +1,25 @@
+const paths = {
+ grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+ box:'<path d="m12 3 9 5-9 5-9-5 9-5Z M3 8v9l9 5 9-5V8 M12 13v9 M7.5 5.5l9 5"/>',
+ layers:'<path d="m12 3 10 5-10 5L2 8l10-5Z M2 12l10 5 10-5 M2 16l10 5 10-5"/>',
+ activity:'<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+ users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/>',
+ search:'<circle cx="10.5" cy="10.5" r="7.5"/><path d="m16 16 5 5"/>',
+ scan:'<path d="M8 3H3v5 M16 3h5v5 M21 16v5h-5 M8 21H3v-5 M7 12h10 M8 8v1 M16 8v1 M8 15v1 M16 15v1"/>',
+ plus:'<path d="M12 5v14 M5 12h14"/>',
+ refresh:'<path d="M20 7v5h-5 M4 17v-5h5 M6.1 6a8 8 0 0 1 13.3 3 M4.6 15A8 8 0 0 0 18 18"/>',
+ arrow:'<path d="M5 12h14 m-5-5 5 5-5 5"/>',
+ down:'<path d="M12 3v12 m-5-5 5 5 5-5 M4 16v5h16v-5"/>',
+ close:'<path d="m6 6 12 12 M6 18 18 6"/>',
+ menu:'<path d="M4 6h16 M4 12h16 M4 18h16"/>',
+ logout:'<path d="M9 4H4v16h5 M9 12h12 m-4-4 4 4-4 4"/>',
+ check:'<path d="m5 12 4 4L19 6"/>',
+ repair:'<path d="m14 6 4 4 3-3a7 7 0 0 1-9 8L6 21l-3-3 6-6a7 7 0 0 1 8-9l-3 3Z"/>',
+ wallet:'<rect x="3" y="5" width="18" height="15" rx="2"/><path d="M3 8h18 M16 12h5v4h-5z"/>',
+ info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6 M12 7h.01"/>',
+ camera:'<path d="M8 5 6 8H3v12h18V8h-3l-2-3H8Z"/><circle cx="12" cy="13" r="3"/>',
+ shield:'<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z m-4 9 3 3 5-6"/>',
+ copy:'<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
+ clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
+};
+export const icon = (name, extra='') => `<svg class="icon ${extra}" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]||paths.box}</svg>`;

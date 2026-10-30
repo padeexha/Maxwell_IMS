@@ -1,54 +1,95 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f5da8" />
-    <title>Maxwell Inventory System</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css" />
-    <style>
-      .item-lookup{margin:18px 0 0;background:#fff;border:1px solid var(--line);border-radius:11px;padding:13px 15px;display:flex;align-items:center;gap:15px;box-shadow:0 3px 12px #092a4b08}.item-lookup>div{display:flex;align-items:center;gap:10px;min-width:285px}.lookup-icon{width:33px;height:33px;border-radius:8px;background:#e8f2fb;color:var(--blue);font-size:21px;display:grid;place-items:center}.item-lookup label{font-weight:700;font-size:13px;color:#304b62}.item-lookup label small{display:block;margin-top:2px;color:var(--muted);font-size:11px;font-weight:400}.item-lookup input{min-width:0;flex:1;border:1px solid #dbe3ea;border-radius:7px;padding:10px 12px;font:13px "DM Sans";outline-color:#82b7e1}.item-lookup .btn{white-space:nowrap}@media(max-width:680px){.item-lookup{align-items:stretch;flex-direction:column;gap:10px}.item-lookup>div{min-width:0}.item-lookup .btn{width:100%}}
-    </style>
-    <style>
-      .stat-grid{grid-template-columns:repeat(5,1fr)}.stat-card.value .stat-icon{color:#7a4f00;background:#fff2d7}.stat-card.value strong{font-size:18px}@media(max-width:1150px){.stat-grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:680px){.stat-grid{grid-template-columns:repeat(2,1fr)}.stat-card.value{grid-column:1/-1}}
-    </style>
-  </head>
-  <body>
-    <section id="auth-panel" class="auth-panel"><h1>Maxwell Inventory</h1><p id="auth-message">Connecting…</p><form id="login-form" class="form-grid"><label>Email<input name="email" type="email" autocomplete="username" required /></label><label>Password<input name="password" type="password" autocomplete="current-password" required /></label><button class="btn primary">Sign in</button></form><button id="auth-signout" class="btn ghost" type="button">Clear session</button></section>
-    <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand"><img src="/maxwell-lanka-logo.png" alt="Maxwell Lanka" /><span>Inventory System</span></div>
-        <nav class="nav" aria-label="Main navigation">
-          <button class="nav-item active" data-page="dashboard"><i>▦</i>Overview</button>
-          <button class="nav-item" data-page="products"><i>□</i>Products</button>
-          <button class="nav-item" data-page="stock"><i>▤</i>Stock units</button>
-          <button class="nav-item" data-page="activity"><i>↻</i>Activity</button>
-          <button class="nav-item" data-page="team"><i>◉</i>Team & access</button>
-        </nav>
-        <div class="sidebar-foot"><div class="help-icon">?</div><div><strong>Need help?</strong><span>Inventory support</span></div></div>
-      </aside>
-      <main class="main">
-        <header class="topbar"><button class="menu-toggle" aria-label="Open navigation">☰</button><div class="crumb"><span id="page-kicker">Overview</span><h1 id="page-title">Inventory overview</h1></div><div class="top-actions"><span id="data-mode"></span><button id="refresh-data" class="btn ghost">Refresh</button><button id="sign-out" class="btn ghost">Sign out</button><button class="icon-btn" aria-label="Notifications">♧<b></b></button><div class="profile"><div class="avatar">NA</div><div><strong>Nimal Abeysekera</strong><span>Administrator</span></div><span class="chevron">⌄</span></div></div></header>
-        <section id="dashboard" class="page active-page">
-          <div class="hero"><div><p class="eyebrow">INVENTORY AT A GLANCE</p><h2>Your stock, clearly in control.</h2><p>Track every item from receiving to sale with a full activity history.</p></div><div class="hero-actions"><button class="btn ghost" id="open-print-settings">Printer settings</button><button class="btn primary" id="open-receive">+ Receive stock</button></div></div>
-          <form class="item-lookup" id="item-lookup"><div><span class="lookup-icon">⌕</span><label for="item-number">Find an item by number <small>Enter the QR inventory code or manufacturer serial number</small></label></div><input id="item-number" autocomplete="off" placeholder="e.g. MSM-8F4A7C or serial number" /><button class="btn primary">Check status</button></form>
-          <div class="stat-grid"><article class="stat-card blue"><div class="stat-icon">▤</div><div><span>Available units</span><strong id="stat-available">0</strong><small><b>↑</b> Ready to sell</small></div></article><article class="stat-card value"><div class="stat-icon">රු</div><div><span>Available stock value</span><strong id="stat-stock-value">LKR 0</strong><small>Value of remaining units</small></div></article><article class="stat-card green"><div class="stat-icon">↗</div><div><span>Sold this month</span><strong id="stat-sold">0</strong><small>Across all products</small></div></article><article class="stat-card amber"><div class="stat-icon">↶</div><div><span>Returns this month</span><strong id="stat-returned">0</strong><small>Returned to stock</small></div></article><article class="stat-card red"><div class="stat-icon">!</div><div><span>Needs attention</span><strong id="stat-attention">0</strong><small>Repair or damaged</small></div></article></div>
-          <div class="dashboard-grid"><section class="panel stock-summary"><div class="panel-head"><div><h3>Stock summary</h3><p>Available stock by product</p></div><button class="text-btn" data-go="products">View all →</button></div><div id="stock-summary" class="summary-list"></div></section><section class="panel activity-panel"><div class="panel-head"><div><h3>Recent activity</h3><p>Latest updates to your inventory</p></div><button class="text-btn" data-go="activity">View history →</button></div><div id="recent-activity" class="activity-list"></div></section></div>
-        </section>
-        <section id="products" class="page"><div class="page-intro"><div><p class="eyebrow">CATALOGUE</p><h2>Products</h2><p>Create products before receiving stock units.</p></div><button class="btn primary" id="open-product">+ Add product</button></div><section class="panel"><div class="table-toolbar"><div class="search"><span>⌕</span><input id="product-search" placeholder="Search products, model or SKU" /></div><span id="product-count" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Available</th><th>Unit value</th><th>Remaining value</th><th></th></tr></thead><tbody id="product-table"></tbody></table></div></section></section>
-        <section id="stock" class="page"><div class="page-intro"><div><p class="eyebrow">UNIT REGISTER</p><h2>Stock units</h2><p>Every QR label corresponds to one physical item.</p></div><div class="inline-actions"><button class="btn ghost" id="print-selected">Print selected</button><button class="btn primary" id="stock-receive">+ Receive stock</button></div></div><section class="panel"><div class="table-toolbar"><div class="filter-row"><div class="search"><span>⌕</span><input id="unit-search" placeholder="Search code, serial or product" /></div><select id="status-filter"><option value="">All statuses</option><option>Available</option><option>Sold</option><option>Returned</option><option>Repair</option><option>Damaged</option></select></div><span id="unit-count" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="select-all" /></th><th>Unit code</th><th>Product</th><th>Serial number</th><th>Received</th><th>Status</th><th></th></tr></thead><tbody id="unit-table"></tbody></table></div></section></section>
-        <section id="activity" class="page"><div class="page-intro"><div><p class="eyebrow">AUDIT TRAIL</p><h2>Activity history</h2><p>A complete record of every stock movement.</p></div><button class="btn ghost" id="export-activity">Export CSV</button></div><section class="panel activity-full" id="full-activity"></section></section>
-        <section id="team" class="page"><div class="page-intro"><div><p class="eyebrow">ACCESS CONTROL</p><h2>Team & access</h2><p>Control exactly who can manage or update stock.</p></div><button class="btn primary" id="open-user">Provisioning instructions</button></div><div class="role-cards"><article><div class="role-icon admin">A</div><h3>Administrator</h3><p>Manage products, stock values, staff access and activity reports.</p></article><article><div class="role-icon manager">M</div><h3>Manager</h3><p>Receive stock, process sales and returns, complete repairs and view reports.</p></article><article><div class="role-icon worker">W</div><h3>Worker</h3><p>View inventory and values; scan to sell, return or flag repairs.</p></article></div><section class="panel"><div class="panel-head"><div><h3>Team members</h3><p>Active users with access to Maxwell Inventory System</p></div></div><div id="team-list" class="team-list"></div></section></section>
-      </main>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="description" content="Maxwell inventory workspace. Manage products, receive stock, and track every item." />
+  <title>Maxwell · Inventory</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <section id="auth-screen" class="auth-screen" aria-label="Sign in">
+    <div class="auth-container">
+      <div class="auth-brand-header">
+        <div class="wordmark"><span class="brand-symbol">M</span><span>MAXWELL<span class="brand-sub">INVENTORY WORKSPACE</span></span></div>
+      </div>
+      <div class="auth-card">
+        <span class="eyebrow">STAFF ACCESS</span>
+        <h2>Welcome back</h2>
+        <p class="muted">Sign in to your inventory workspace.</p>
+        <div id="auth-message" class="notice" role="status">Checking your session…</div>
+        <form id="login-form">
+          <label for="login-email">Email address</label>
+          <input id="login-email" name="email" type="email" autocomplete="username" placeholder="you@example.com" required />
+          <label for="login-password">Password</label>
+          <div class="password-field">
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+            <button type="button" id="show-password" aria-label="Show password">Show</button>
+          </div>
+          <button id="login-submit" class="btn primary full-width" disabled>Sign in</button>
+        </form>
+        <p class="auth-help">Need access or a password reset? Contact your inventory administrator.</p>
+        <button id="clear-session" class="text-button" hidden>Sign out of this session</button>
+      </div>
+      <span class="auth-footer">Maxwell Inventory Workspace · Private Staff Access</span>
     </div>
-    <button class="scan-fab" id="open-scan"><span>⌁</span><b>Scan item</b></button>
-    <div class="modal-backdrop" id="modal-backdrop"></div>
-    <dialog id="modal"><button class="modal-close" aria-label="Close">×</button><div id="modal-content"></div></dialog>
-    <template id="product-form"><div class="modal-title"><p class="eyebrow">PRODUCT CATALOGUE</p><h2>Add a product</h2><p>Create a product model before receiving physical units.</p></div><form id="product-form" class="form-grid"><label>Product name<input required name="name" placeholder="e.g. Samsung 55-inch Crystal UHD TV" /></label><label>Brand<input name="brand" placeholder="e.g. Samsung" /></label><label>SKU<input required name="sku" placeholder="e.g. SAM-TV-55-CU8000" /></label><label>Category<select name="category"><option>Appliances</option><option>Furniture</option><option>Electronics</option><option>Other</option></select></label><label>Model number<input name="model" placeholder="Optional" /></label><label>Reorder level<input type="number" name="reorderLevel" min="0" value="2" /></label><label class="full">Unit stock value (LKR)<input type="number" name="unitValue" min="0" step="0.01" value="0" placeholder="e.g. 150000" /><small>Use the value you want to count for each available unit.</small></label><div class="form-actions"><button type="button" class="btn ghost cancel">Cancel</button><button class="btn primary">Save product</button></div></form></template>
-    <template id="receive-form"><div class="modal-title"><p class="eyebrow">STOCK INTAKE</p><h2>Receive stock</h2><p>We will create a unique, printable QR code for every unit.</p></div><form id="receive-form" class="form-grid"><label class="full">Product<select required name="productId" id="receive-product"></select></label><label>Quantity<input required type="number" name="quantity" min="1" max="100" value="1" /></label><label>Supplier/reference<input name="reference" placeholder="Optional purchase reference" /></label><label class="full">Serial numbers <small>Optional — one per line for electronics. Blank units will be generated without a serial number.</small><textarea name="serials" rows="4" placeholder="SN-001&#10;SN-002"></textarea></label><label class="full check-label"><input type="checkbox" name="print" checked /> Send QR labels to printer after saving</label><div class="form-actions"><button type="button" class="btn ghost cancel">Cancel</button><button class="btn primary">Create stock units</button></div></form></template>
-    <script type="module" src="app.js"></script>
-  </body>
+  </section>
+  <div id="workspace" class="workspace" hidden>
+    <aside id="sidebar" class="sidebar" aria-label="Workspace navigation">
+      <a href="#overview" class="wordmark sidebar-brand"><span class="brand-symbol">M</span><span>MAXWELL<span class="brand-sub">INVENTORY WORKSPACE</span></span></a>
+      <button class="icon-button drawer-close" id="close-menu" aria-label="Close navigation"></button>
+      <span class="nav-label">Workspace</span>
+      <nav id="navigation" aria-label="Main navigation"></nav>
+      <div class="sidebar-bottom">
+        <div id="mode-label" class="workspace-mode"></div>
+        <div class="account">
+          <div id="account-avatar" class="avatar"></div>
+          <div class="account-text">
+            <strong id="account-name"></strong>
+            <span id="account-role"></span>
+          </div>
+          <button id="sign-out" class="icon-button" aria-label="Sign out"></button>
+        </div>
+      </div>
+    </aside>
+    <button id="drawer-scrim" class="drawer-scrim" aria-label="Close navigation" hidden></button>
+    <div class="workspace-body">
+      <header class="topbar">
+        <div class="breadcrumb">
+          <button id="open-menu" class="icon-button menu-button" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar"></button>
+          <span>Workspace</span>
+          <span class="slash">/</span>
+          <strong id="breadcrumb-page">Overview</strong>
+        </div>
+        <div class="topbar-actions">
+          <span id="sync-status" class="sync-status"></span>
+          <button id="refresh-data" class="icon-button" aria-label="Refresh inventory"></button>
+          <button id="find-item" class="btn secondary"></button>
+        </div>
+      </header>
+      <main id="main-content" tabindex="-1">
+        <div id="page-notice" class="notice warning" role="status" hidden></div>
+        <div id="page-content"></div>
+      </main>
+      <footer class="workspace-footer">
+        <span>Maxwell Inventory</span>
+        <span>All values in LKR</span>
+      </footer>
+    </div>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title">
+    <div class="dialog-header">
+      <div>
+        <span id="dialog-kicker" class="eyebrow"></span>
+        <h2 id="dialog-title"></h2>
+      </div>
+      <button id="close-dialog" class="icon-button" aria-label="Close dialog"></button>
+    </div>
+    <div id="dialog-body"></div>
+  </dialog>
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/app.js"></script>
+</body>
 </html>

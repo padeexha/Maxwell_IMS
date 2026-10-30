@@ -1,129 +1,1345 @@
-import { hosted, client, command, snapshot } from './backend.js';
-const PRINT_SERVER = localStorage.getItem('maxwell_print_server') || 'http://localhost:5001';
-const KEY = 'maxwell_inventory_v1';
-const seed = {
-  products: [
-    {id:'p1',name:'Samsung 55-inch Crystal UHD TV',brand:'Samsung',sku:'SAM-TV-55-CU8000',category:'Electronics',model:'CU8000',reorderLevel:2,unitValue:0},
-    {id:'p2',name:'Singer 300L Double Door Refrigerator',brand:'Singer',sku:'SIN-RF-300-DD',category:'Appliances',model:'SRF-300',reorderLevel:2,unitValue:0},
-    {id:'p3',name:'Modern 3-Seater Sofa',brand:'Maxwell Home',sku:'MXL-SOF-3S-GRY',category:'Furniture',model:'M3S-GRY',reorderLevel:1,unitValue:0},
-    {id:'p4',name:'Panasonic Microwave Oven 25L',brand:'Panasonic',sku:'PAN-MW-25L',category:'Appliances',model:'NN-ST34',reorderLevel:2,unitValue:0}
-  ],
-  units: [
-    {id:'u1',code:'MSM-8F4A7C',productId:'p1',serial:'SAM-CU8-091428',status:'Available',receivedAt:'2026-10-24'},
-    {id:'u2',code:'MSM-9K2D5H',productId:'p1',serial:'SAM-CU8-091429',status:'Available',receivedAt:'2026-10-24'},
-    {id:'u3',code:'MSM-4Q7X1B',productId:'p2',serial:'SNG-300-00481',status:'Available',receivedAt:'2026-10-22'},
-    {id:'u4',code:'MSM-6L9P3R',productId:'p2',serial:'SNG-300-00482',status:'Sold',receivedAt:'2026-10-21',soldAt:'2026-10-27'},
-    {id:'u5',code:'MSM-2T8M5V',productId:'p3',serial:'',status:'Available',receivedAt:'2026-10-20'},
-    {id:'u6',code:'MSM-7W3N9C',productId:'p3',serial:'',status:'Repair',receivedAt:'2026-10-19'},
-    {id:'u7',code:'MSM-3J5R8K',productId:'p4',serial:'PAN-25L-10923',status:'Available',receivedAt:'2026-10-26'},
-    {id:'u8',code:'MSM-1C6F4Z',productId:'p4',serial:'PAN-25L-10924',status:'Returned',receivedAt:'2026-10-18',returnedAt:'2026-10-27'}
-  ],
-  activities: [
-    {id:'a1',type:'sale',unitCode:'MSM-6L9P3R',text:'Marked as sold',by:'Kavindi Perera',at:'2026-10-28T09:45:00'},
-    {id:'a2',type:'return',unitCode:'MSM-1C6F4Z',text:'Returned to stock',by:'Nimal Abeysekera',at:'2026-10-27T15:22:00'},
-    {id:'a3',type:'add',unitCode:'MSM-3J5R8K',text:'Received into stock',by:'Nimal Abeysekera',at:'2026-10-26T11:10:00'},
-    {id:'a4',type:'add',unitCode:'MSM-9K2D5H',text:'Received into stock',by:'Nimal Abeysekera',at:'2026-10-24T10:03:00'}
-  ],
-  users:[{name:'Nimal Abeysekera',initials:'NA',role:'Administrator',email:'nimal@maxwell.lk'},{name:'Kavindi Perera',initials:'KP',role:'Worker',email:'kavindi@maxwell.lk'},{name:'Dilan Fernando',initials:'DF',role:'Manager',email:'dilan@maxwell.lk'}]
-};
-let db = hosted ? {products:[],units:[],activities:[],users:[]} : JSON.parse(localStorage.getItem(KEY) || 'null') || structuredClone(seed);
-let currentUser = hosted ? null : seed.users[0];
-let busy = false;
-db.products.forEach(p=>{if(typeof p.unitValue!=='number')p.unitValue=0});
-let selected = new Set(); let scanner = null;
-const $ = s => document.querySelector(s); const $$ = s => [...document.querySelectorAll(s)];
-const save = () => {if(!hosted) localStorage.setItem(KEY, JSON.stringify(db))};
-const product = id => db.products.find(p=>p.id===id);
-const esc = s => String(s || '').replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-const date = d => new Intl.DateTimeFormat('en-LK',{day:'numeric',month:'short',year:'numeric'}).format(new Date(d));
-const money = value => new Intl.NumberFormat('en-LK',{style:'currency',currency:'LKR',maximumFractionDigits:0}).format(value||0);
-const timeAgo = d => { const h=(Date.now()-new Date(d))/36e5; return h<24?`${Math.max(1,Math.floor(h))}h ago`:h<48?'Yesterday':date(d) };
-function code(){return 'MSM-'+crypto.getRandomValues(new Uint32Array(1))[0].toString(36).toUpperCase().slice(0,7)}
-function toast(message){const t=document.createElement('div');t.className='toast';t.textContent=message;document.body.append(t);setTimeout(()=>t.remove(),2700)}
-function statusClass(status){return status.toLowerCase()}
-function unitProductName(u){return product(u.productId)?.name || 'Unknown product'}
-function activityIcon(type){return type==='sale'?'↗':type==='add'?'＋':type==='return'?'↶':'!'}
-function activityRow(a){let u=db.units.find(x=>x.code===a.unitCode), name=u?unitProductName(u):'Inventory update';return `<div class="activity-row"><div class="activity-dot ${a.type}">${activityIcon(a.type)}</div><div><strong>${esc(a.text)} <span class="code">${esc(a.unitCode||'')}</span></strong><span>${esc(name)} · ${esc(a.by)}</span></div><time>${timeAgo(a.at)}</time></div>`}
-function addActivity(type,unit,text){db.activities.unshift({id:crypto.randomUUID(),type,unitCode:unit.code,text,by:'Nimal Abeysekera',at:new Date().toISOString()});save()}
-function sameMonth(value){const d=new Date(value||0),now=new Date();return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()}
-function renderDashboard(){const available=db.units.filter(u=>u.status==='Available');$('#stat-available').textContent=available.length;$('#stat-stock-value').textContent=money(available.reduce((sum,u)=>sum+Number(product(u.productId)?.unitValue||0),0));$('#stat-sold').textContent=db.units.filter(u=>u.status==='Sold'&&sameMonth(u.soldAt)).length;$('#stat-returned').textContent=db.units.filter(u=>sameMonth(u.returnedAt)).length;$('#stat-attention').textContent=db.units.filter(u=>['Repair','Damaged'].includes(u.status)).length;
- const rows=db.products.map(p=>{const count=available.filter(u=>u.productId===p.id).length;return {p,count}}).sort((a,b)=>b.count-a.count);
- $('#stock-summary').innerHTML=rows.length?rows.slice(0,5).map(({p,count})=>`<div class="summary-row"><div class="product-mark">${esc(p.name[0])}</div><div><strong>${esc(p.name)}</strong><span>${count} unit${count===1?'':'s'} · ${Number(p.unitValue)?money(count*p.unitValue):'Value not set'}</span></div><div class="qty">${Number(p.unitValue)?money(count*p.unitValue):'—'}</div></div>`).join(''):'<div class="empty">No products yet.</div>';
- $('#recent-activity').innerHTML=db.activities.slice(0,5).map(activityRow).join('')||'<div class="empty">No activity yet.</div>'}
-function renderProducts(){let q=$('#product-search').value.toLowerCase();let products=db.products.filter(p=>`${p.name} ${p.sku} ${p.model}`.toLowerCase().includes(q));$('#product-count').textContent=`${products.length} product${products.length===1?'':'s'}`;$('#product-table').innerHTML=products.map(p=>{let count=db.units.filter(u=>u.productId===p.id&&u.status==='Available').length,value=Number(p.unitValue||0);return `<tr><td><strong>${esc(p.name)}</strong><span>${esc(p.brand||'')}</span></td><td class="code">${esc(p.sku)}</td><td>${esc(p.category)}</td><td><strong>${count}</strong>${count<=p.reorderLevel?'<span style="color:#c87b12">Low stock</span>':''}</td><td>${value?money(value):'<span>Not set</span>'}</td><td><strong>${value?money(count*value):'—'}</strong></td><td><button class="row-btn" data-value-product="${p.id}">${value?'Edit value':'Set value'}</button> <button class="row-btn" data-receive-product="${p.id}">Receive →</button></td></tr>`}).join('')||'<tr><td colspan="7" class="empty">No matching products.</td></tr>'}
-function renderUnits(){let q=$('#unit-search').value.toLowerCase(), status=$('#status-filter').value;let units=db.units.filter(u=>!status||u.status===status).filter(u=>`${u.code} ${u.serial} ${unitProductName(u)}`.toLowerCase().includes(q));$('#unit-count').textContent=`${units.length} unit${units.length===1?'':'s'}`;$('#unit-table').innerHTML=units.map(u=>`<tr><td><input type="checkbox" class="unit-check" value="${u.id}" ${selected.has(u.id)?'checked':''}/></td><td class="code">${u.code}</td><td><strong>${esc(unitProductName(u))}</strong><span>${esc(product(u.productId)?.sku)}</span></td><td>${esc(u.serial||'—')}</td><td>${date(u.receivedAt)}</td><td><span class="status ${statusClass(u.status)}">${u.status}</span></td><td><button class="row-btn" data-unit="${u.code}">View →</button></td></tr>`).join('')||'<tr><td colspan="7" class="empty">No matching stock units.</td></tr>';$('#select-all').checked=units.length>0&&units.every(u=>selected.has(u.id))}
-function renderActivity(){$('#full-activity').innerHTML=db.activities.map(activityRow).join('')||'<div class="empty">No activity yet.</div>'}
-function renderTeam(){$('#team-list').innerHTML=db.users.map(u=>`<div class="member"><div class="avatar">${esc(u.initials)}</div><div class="member-info"><strong>${esc(u.name)}</strong><span>${esc(u.email)}</span></div><span class="status ${u.role==='Administrator'?'returned':u.role==='Manager'?'available':'sold'}">${u.role}</span>${hosted&&currentUser?.role==='Administrator'&&u.id!==currentUser.id?`<button class="row-btn" data-access="${u.id}">Edit access${u.active?'':' (disabled)'}</button>`:''}</div>`).join('')}
-function render(){renderDashboard();renderProducts();renderUnits();renderActivity();renderTeam();applyPermissions()}
-function openModal(content){$('#modal-content').replaceChildren(content);$('#modal-backdrop').classList.add('show');$('#modal').showModal();$('.cancel')?.addEventListener('click',closeModal)}
-function closeModal(){stopScanner();$('#modal').close();$('#modal-backdrop').classList.remove('show')}
-function cloneTemplate(id){return $('#'+id).content.cloneNode(true)}
-function productModal(){let c=cloneTemplate('product-form');let form=c.querySelector('form');form.addEventListener('submit',async e=>{e.preventDefault();let f=new FormData(form),p={id:crypto.randomUUID(),name:f.get('name').trim(),brand:f.get('brand').trim(),sku:f.get('sku').trim().toUpperCase(),category:f.get('category'),model:f.get('model').trim(),reorderLevel:Number(f.get('reorderLevel')),unitValue:Number(f.get('unitValue')||0)};if(db.products.some(x=>x.sku===p.sku))return toast('That SKU already exists.');if(hosted)return mutate('create_product',p);db.products.push(p);save();render();closeModal();toast('Product added successfully.')});openModal(c)}
-function valueModal(p){let c=document.createElement('div');c.innerHTML=`<div class="modal-title"><p class="eyebrow">PRODUCT VALUE</p><h2>${esc(p.name)}</h2><p>Set the value counted for every available unit.</p></div><form class="form-grid" id="value-form"><label class="full">Unit stock value (LKR)<input required name="unitValue" type="number" min="0" step="0.01" value="${Number(p.unitValue||0)}" /><small>Current available value: ${money(db.units.filter(u=>u.productId===p.id&&u.status==='Available').length*Number(p.unitValue||0))}</small></label><div class="form-actions"><button type="button" class="btn ghost cancel">Cancel</button><button class="btn primary">Save value</button></div></form>`;c.querySelector('form').onsubmit=async e=>{e.preventDefault();let value=Number(new FormData(e.target).get('unitValue')||0);if(hosted)return mutate('set_value',{id:p.id,value});p.unitValue=value;save();render();closeModal();toast('Product value saved.');};openModal(c)}
-function receiveModal(preselected=''){let c=cloneTemplate('receive-form'), select=c.querySelector('#receive-product');select.innerHTML='<option value="">Select a product</option>'+db.products.map(p=>`<option value="${p.id}" ${p.id===preselected?'selected':''}>${esc(p.name)} · ${esc(p.sku)}</option>`).join('');let form=c.querySelector('form');form.addEventListener('submit',async e=>{e.preventDefault();let f=new FormData(form),pid=f.get('productId'),qty=Number(f.get('quantity')),serials=f.get('serials').split('\n').map(x=>x.trim()).filter(Boolean);if(!pid)return toast('Choose a product first.'); if(serials.length>qty)return toast('You entered more serial numbers than units.');if(hosted){const units=await mutate('receive',{productId:pid,quantity:qty,serials,reference:f.get('reference')});if(units&&f.get('print')==='on')await printLabels(units);return;}let units=[];for(let i=0;i<qty;i++){let u={id:crypto.randomUUID(),code:code(),productId:pid,serial:serials[i]||'',status:'Available',receivedAt:new Date().toISOString().slice(0,10),reference:f.get('reference')};db.units.push(u);addActivity('add',u,'Received into stock');units.push(u)}save();render();let shouldPrint=f.get('print')==='on';closeModal();toast(`${qty} stock unit${qty===1?'':'s'} created.`);if(shouldPrint)await printLabels(units)});if(hosted){c.querySelector('[name=print]').checked=false;c.querySelector('[name=print]').disabled=true;}openModal(c)}
-async function printLabels(units){if(hosted)return toast('Hosted printing requires a secure print agent; see deployment guide.');if(!units.length)return toast('Select at least one unit to print.');let labels=units.map(u=>({name:unitProductName(u),barcode:u.code})),key=localStorage.getItem('maxwell_print_key'),headers={'Content-Type':'application/json'};if(key)headers['X-Api-Key']=key;toast('Sending QR label job to printer…');try{let r=await fetch(PRINT_SERVER+'/print',{method:'POST',headers,body:JSON.stringify({labels})});if(!r.ok)throw new Error(await r.text());toast(`Print job sent: ${labels.length} label${labels.length===1?'':'s'}.`)}catch(e){toast('Units created. Printer not reached — check local print server.');console.warn(e)}}
-function unitModal(unit){let p=product(unit.productId);let c=document.createElement('div');c.innerHTML=`<div class="modal-title"><p class="eyebrow">STOCK UNIT</p><h2>${esc(p.name)}</h2><p class="code">${unit.code}</p></div><div class="scan-result"><h3>Current status: <span class="status ${statusClass(unit.status)}">${unit.status}</span></h3><p>Serial number: ${esc(unit.serial||'Not recorded')}<br>Received: ${date(unit.receivedAt)}</p></div><div class="sale-actions"><button class="btn ghost" id="unit-print">Print label</button>${unit.status==='Available'?'<button class="btn primary" id="unit-sell">Mark sold</button>':''}${unit.status==='Sold'?'<button class="btn primary" id="unit-return">Return to stock</button>':''}</div>`;c.querySelector('#unit-print').hidden=hosted||currentUser?.role==='Worker';c.querySelector('#unit-print').onclick=()=>printLabels([unit]);if(unit.status==='Repair'&&currentUser?.role!=='Worker'){let b=document.createElement('button');b.className='btn primary';b.textContent='Complete repair';b.onclick=()=>updateUnit(unit,'Available','repair','Repair completed');c.querySelector('.sale-actions').append(b);}c.querySelector('#unit-sell')?.addEventListener('click',()=>updateUnit(unit,'Sold','sale','Marked as sold'));c.querySelector('#unit-return')?.addEventListener('click',()=>updateUnit(unit,'Available','return','Returned to stock'));openModal(c)}
-async function updateUnit(unit,status,type,text){if(hosted)return mutate('transition',{id:unit.id,status,version:unit.version});unit.status=status;if(status==='Sold')unit.soldAt=new Date().toISOString();if(type==='return')unit.returnedAt=new Date().toISOString();addActivity(type,unit,text);save();render();closeModal();toast(`${unit.code} updated to ${status}.`)}
-async function scannerModal(){let c=document.createElement('div');c.className='scan-modal';c.innerHTML=`<div class="modal-title"><p class="eyebrow">WORKER MODE</p><h2>Scan an item</h2><p>Point the camera at the Maxwell QR label.</p></div><div class="scanner-frame"><video autoplay playsinline></video><div class="scanner-placeholder">Opening camera…</div></div><div class="scan-choice"><button id="manual-scan">Enter unit code manually</button><button id="demo-scan">Try demo scan</button></div><div id="scan-output"></div>`;openModal(c);let video=c.querySelector('video');c.querySelector('#manual-scan').onclick=()=>{let value=prompt('Enter the unit code (for example MSM-8F4A7C)');if(value)showScanned(value.trim().toUpperCase(),c)};c.querySelector('#demo-scan').hidden=hosted;c.querySelector('#demo-scan').onclick=()=>showScanned(db.units.find(u=>u.status==='Available')?.code,c);try{let stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}});scanner=stream;video.srcObject=stream;c.querySelector('.scanner-placeholder').remove();if('BarcodeDetector'in window){let detector=new BarcodeDetector({formats:['qr_code']});let timer=setInterval(async()=>{try{let codes=await detector.detect(video);if(codes[0]?.rawValue){clearInterval(timer);showScanned(codes[0].rawValue,c)}}catch{}},500);c.dataset.timer=timer}}catch{c.querySelector('.scanner-placeholder').textContent='Camera unavailable. Enter the unit code manually.'}}
-function stopScanner(){if(scanner){scanner.getTracks().forEach(t=>t.stop());scanner=null}let c=$('#modal-content > div');if(c?.dataset?.timer)clearInterval(c.dataset.timer)}
-function showScanned(raw,c){let normalized=(raw||'').trim().toUpperCase();let u=db.units.find(x=>x.code===normalized);let out=c.querySelector('#scan-output');stopScanner();if(!u){out.innerHTML='<div class="scan-result"><h3>Item not found</h3><p>This QR code is not registered in Maxwell Inventory System.</p></div>';return}let p=product(u.productId);let buttons=u.status==='Available'?`<button class="btn primary" id="scan-sell">Mark as sold</button><button class="btn ghost" id="scan-repair">Damaged / repair</button>`:u.status==='Sold'?`<button class="btn primary" id="scan-return">Return to stock</button>`:'';out.innerHTML=`<div class="scan-result"><h3>${esc(p.name)}</h3><p><span class="code">${u.code}</span> · Current status: <b>${u.status}</b></p><div class="sale-actions">${buttons}</div></div>`;out.querySelector('#scan-sell')?.addEventListener('click',()=>updateUnit(u,'Sold','sale','Marked as sold'));out.querySelector('#scan-return')?.addEventListener('click',()=>updateUnit(u,'Available','return','Returned to stock'));out.querySelector('#scan-repair')?.addEventListener('click',()=>updateUnit(u,'Repair','alert','Marked for repair'))}
-function printerSettings(){let c=document.createElement('div');c.innerHTML=`<div class="modal-title"><p class="eyebrow">PRINTING</p><h2>Local print server</h2><p>Connect the app to the computer running <span class="code">print_server.py</span>.</p></div><form class="form-grid" id="printer-form"><label class="full">Print server address<input name="url" value="${esc(PRINT_SERVER)}" placeholder="http://localhost:5001"/><small>For production, use the secure local print-agent address.</small></label><label class="full">Print server API key<input name="key" type="password" value="${esc(localStorage.getItem('maxwell_print_key')||'')}" placeholder="Optional unless enabled on the print server" /></label><div class="form-actions"><button type="button" class="btn ghost cancel">Cancel</button><button class="btn primary">Save connection</button></div></form>`;c.querySelector('form').onsubmit=e=>{e.preventDefault();let f=new FormData(e.target);localStorage.setItem('maxwell_print_server',f.get('url').replace(/\/$/,''));localStorage.setItem('maxwell_print_key',f.get('key'));closeModal();toast('Print server connection saved. Reload to apply the address.');};openModal(c)}
-function exportActivity(){let csv=['Date,Action,Unit code,Product,Performed by'];db.activities.forEach(a=>{let u=db.units.find(x=>x.code===a.unitCode);csv.push([a.at,a.text,a.unitCode,u?unitProductName(u):'',a.by].map(v=>'"'+String(/^[=+@\-\t\r]/.test(String(v)) ? "'"+v : v).replaceAll('"','""')+'"').join(','))});let blob=new Blob([csv.join('\n')],{type:'text/csv'}),link=Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:'maxwell-inventory-activity.csv'});link.click();URL.revokeObjectURL(link.href)}
-function lookupItem(value){let query=value.trim().toLowerCase();if(!query)return toast('Enter an item number or serial number.');let unit=db.units.find(u=>u.code.toLowerCase()===query||u.serial.toLowerCase()===query);if(unit)return unitModal(unit);toast('No item was found with that number.');}
-$$('.nav-item').forEach(b=>b.onclick=()=>{let id=b.dataset.page;$$('.nav-item').forEach(x=>x.classList.toggle('active',x===b));$$('.page').forEach(x=>x.classList.toggle('active-page',x.id===id));$('#page-kicker').textContent=b.textContent.trim();$('#page-title').textContent=id==='dashboard'?'Inventory overview':b.textContent.trim();$('.sidebar').classList.remove('open');window.scrollTo(0,0)});
-$('#open-product').onclick=productModal;$('#open-receive').onclick=()=>receiveModal();$('#stock-receive').onclick=()=>receiveModal();$('#open-scan').onclick=scannerModal;$('#open-print-settings').onclick=printerSettings;$('#modal-backdrop').onclick=closeModal;$('#modal').querySelector('.modal-close').onclick=closeModal;$('#product-search').oninput=renderProducts;$('#unit-search').oninput=renderUnits;$('#status-filter').onchange=renderUnits;$('#product-table').onclick=e=>{let id=e.target.dataset.receiveProduct;if(id)receiveModal(id)};$('#unit-table').onclick=e=>{let id=e.target.value;if(e.target.classList.contains('unit-check')){e.target.checked?selected.add(id):selected.delete(id);return}let code=e.target.dataset.unit;if(code)unitModal(db.units.find(u=>u.code===code))};$('#select-all').onchange=e=>{let visible=[...$('#unit-table').querySelectorAll('.unit-check')];visible.forEach(x=>e.target.checked?selected.add(x.value):selected.delete(x.value));renderUnits()};$('#print-selected').onclick=()=>printLabels(db.units.filter(u=>selected.has(u.id)));$('#export-activity').onclick=exportActivity;$('#item-lookup').onsubmit=e=>{e.preventDefault();lookupItem($('#item-number').value)};$$('[data-go]').forEach(b=>b.onclick=()=>document.querySelector(`[data-page="${b.dataset.go}"]`).click());$('.menu-toggle').onclick=()=>$('.sidebar').classList.toggle('open');
-initialize();
-$('#product-table').addEventListener('click',e=>{let id=e.target.dataset.valueProduct;if(id)valueModal(product(id))});
+import { hosted, client, command, snapshot, configurationError } from './backend.js';
+import {
+  permissions,
+  transitions,
+  emptyDatabase,
+  metrics,
+  paginate,
+  findUnit,
+  validateProduct,
+  validateReceipt,
+  validateValue,
+  csvCell,
+  errorMessage,
+  ROLES
+} from './src/domain.js';
+import { loadDemo, demoCommand } from './src/demo.js';
+import { icon } from './src/icons.js';
 
-function applyPermissions(){
- const role=currentUser?.role, admin=role==='Administrator', manager=admin||role==='Manager';
- for(const id of ['open-product']) $('#'+id).hidden=!admin;
- for(const id of ['open-receive','stock-receive','print-selected','export-activity']) $('#'+id).hidden=!manager;
- $('#open-print-settings').hidden=hosted||!admin;$('#print-selected').hidden=hosted||!manager;
- $$('[data-value-product]').forEach(b=>b.hidden=!admin);
- $$('[data-receive-product]').forEach(b=>b.hidden=!manager);
- $('[data-page="team"]').hidden=!admin;
- $('[data-page="activity"]').hidden=!manager;
- $('[data-go="activity"]').hidden=!manager;
- $('#recent-activity').closest('section').hidden=!manager;
- $('#open-user').hidden=!admin;
- $('.profile strong').textContent=currentUser?.name||'';
- $('.profile .avatar').textContent=currentUser?.name?.split(' ').map(x=>x[0]).slice(0,2).join('')||'';
- $('.profile span').textContent=role||'';
- $('#data-mode').textContent=hosted?'Live database':'Local demo';
- $('#sign-out').hidden=!hosted; $('#refresh-data').hidden=!hosted;
+// DOM Selectors & Utilities
+const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+const esc = value =>
+  String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = value =>
+  new Intl.NumberFormat('en-LK', {
+    style: 'currency',
+    currency: 'LKR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(value) || 0);
+
+const date = value => {
+  if (!value) return '—';
+  const d = new Date(value.includes('T') ? value : value + 'T00:00:00');
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
+const initials = name =>
+  (name || '')
+    .trim()
+    .split(/\s+/)
+    .map(x => x[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+
+const badge = status => `<span class="badge ${String(status).toLowerCase()}">${esc(status)}</span>`;
+
+const button = (label, action, kind = 'primary', symbol = 'plus', attrs = '') =>
+  `<button class="btn ${kind}" data-action="${action}" ${attrs}>${symbol ? icon(symbol) : ''}${label}</button>`;
+
+const pages = {
+  overview: ['Overview', 'grid'],
+  products: ['Products', 'layers'],
+  stock: ['Stock units', 'box'],
+  activity: ['Activity', 'activity'],
+  team: ['Team & access', 'users']
+};
+
+let db = emptyDatabase();
+let user = null;
+let page = 'overview';
+let busy = false;
+let refreshing = false;
+let lastRefresh = null;
+let authEpoch = 0;
+
+let filters = { products: '', stock: '', status: '', activity: '' };
+let pageNumbers = { products: 1, stock: 1, activity: 1 };
+let cameraStream = null;
+let cameraTimer = null;
+let cameraGeneration = 0;
+let modalTrigger = null;
+
+const dialog = $('#dialog');
+const product = id => db.products.find(p => p.id === id);
+const access = () => permissions(user?.role);
+const canView = id => (id === 'team' ? access().team : id === 'activity' ? access().reports : Boolean(user));
+
+function toast(message) {
+  const node = document.createElement('div');
+  node.className = 'toast';
+  node.innerHTML = icon('check');
+  const text = document.createElement('span');
+  text.textContent = message;
+  node.append(text);
+  $('#toasts').replaceChildren(node);
+  setTimeout(() => node.remove(), 4000);
 }
-function lock(message){
- closeModal(); currentUser=null; selected.clear(); db={products:[],units:[],activities:[],users:[]};render();
- document.body.classList.remove('authenticated');$('#auth-message').textContent=message;
+
+function notice(message = '') {
+  $('#page-notice').textContent = message;
+  $('#page-notice').hidden = !message;
 }
-async function refresh(){
- const state=await snapshot();db=state.db;currentUser=state.profile;selected.clear();render();
- if(currentUser.role!=='Administrator' && $('#team').classList.contains('active-page') || currentUser.role==='Worker'&&$('#activity').classList.contains('active-page')) $('[data-page="dashboard"]').click();
- document.body.classList.add('authenticated');
+
+function header(title, description, actions = '') {
+  return `<div class="page-header">
+    <div>
+      <span class="eyebrow">Inventory Workspace</span>
+      <h1>${title}</h1>
+      <p>${description}</p>
+    </div>
+    ${actions ? `<div class="header-meta">${actions}</div>` : ''}
+  </div>`;
 }
-async function mutate(action,payload){
- if(busy)return;busy=true;
- const buttons=$$('#modal button');buttons.forEach(b=>b.disabled=true);
- let committed=false;
- try{const result=await command(action,payload);committed=true;closeModal();await refresh();toast('Saved to database.');return result;}
- catch(error){if(committed){lock('Saved, but refresh failed. Sign in again before continuing.');}toast(error.message||'Request failed.');}
- finally{busy=false;buttons.forEach(b=>b.disabled=false);}
+
+function empty(title, description, action = '', symbol = 'box') {
+  return `<div class="empty">
+    <span class="empty-icon">${icon(symbol)}</span>
+    <h3>${title}</h3>
+    <p>${description}</p>
+    ${action}
+  </div>`;
 }
-async function initialize(){
- $('#login-form').onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;
-  try{const f=new FormData(e.target);const {error}=await client.auth.signInWithPassword({email:f.get('email'),password:f.get('password')});if(error)throw error;await refresh();e.target.reset();}
-  catch(error){lock(error.message);}finally{button.disabled=false;}
- };
- const logout=async()=>{const {error}=await client.auth.signOut();lock(error?'Sign out failed. Try clearing the session again.':'Sign in to access inventory.');};
- $('#sign-out').onclick=logout;$('#auth-signout').onclick=logout;
- $('#refresh-data').onclick=async()=>{try{await refresh();toast('Inventory refreshed.');}catch(e){lock(e.message);}};
- $('#open-user').onclick=()=>toast('Create the account in Supabase Auth and provision its profile using the README SQL.');
- $('#team-list').onclick=e=>{const u=db.users.find(u=>u.id===e.target.dataset.access);if(!u)return;
-  const c=document.createElement('div');c.innerHTML=`<h2>Edit access: ${esc(u.name)}</h2><form class="form-grid"><label>Role<select name="role">${['Administrator','Manager','Worker'].map(r=>`<option ${u.role===r?'selected':''}>${r}</option>`).join('')}</select></label><label>Active<input type="checkbox" name="active" ${u.active?'checked':''}></label><button class="btn primary">Save access</button></form>`;
-  c.querySelector('form').onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);mutate('set_access',{id:u.id,role:f.get('role'),active:f.get('active')==='on'});};openModal(c);
- };
- if(!hosted){document.body.classList.add('authenticated');render();return;}
- client.auth.onAuthStateChange(event=>{if(event==='SIGNED_OUT')lock('Sign in to access inventory.');});
- try{await refresh();}catch(error){lock(error.message);}
+
+function activityRow(a) {
+  const kind = ['sale', 'return', 'add', 'alert', 'repair', 'product', 'access'].includes(a.type) ? a.type : 'product';
+  const sym = kind === 'sale' ? 'arrow' : kind === 'return' ? 'refresh' : kind === 'alert' ? 'repair' : kind === 'access' ? 'shield' : 'plus';
+  return `<div class="activity-row">
+    <span class="activity-symbol ${kind}">${icon(sym)}</span>
+    <div class="activity-body">
+      <strong>${esc(a.text)}</strong>
+      <p>${esc(a.by)}${a.unitCode ? ` · <span class="code">${esc(a.unitCode)}</span>` : ''}</p>
+    </div>
+    <time datetime="${esc(a.at)}" title="${esc(new Date(a.at).toLocaleString())}">${date(a.at)}</time>
+  </div>`;
 }
+
+function renderOverview() {
+  const m = metrics(db);
+  const counts = new Map(db.products.map(p => [p.id, 0]));
+  db.units.forEach(u => {
+    if (u.status === 'Available') counts.set(u.productId, (counts.get(u.productId) || 0) + 1);
+  });
+  const sorted = [...db.products].sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0));
+  const low = sorted.filter(p => counts.get(p.id) <= p.reorderLevel).sort((a, b) => counts.get(a.id) - counts.get(b.id));
+  const total = Math.max(1, m.total);
+  const max = Math.max(1, ...counts.values());
+
+  const metric = (label, value, foot, symbol, cls = '') =>
+    `<article class="metric ${cls}">
+      <div class="metric-top"><span>${label}</span>${icon(symbol)}</div>
+      <strong>${value}</strong>
+      <small>${foot}</small>
+    </article>`;
+
+  return (
+    header(
+      'Inventory overview',
+      'Current stock balance, catalogue valuation, and items requiring attention.',
+      access().receive ? button('Receive stock', 'receive') : ''
+    ) +
+    `<div class="metric-grid">
+      ${metric('Available units', m.Available, '<span class="dot"></span>Ready for dispatch or sale', 'box')}
+      ${metric('Available stock value', money(m.value), 'Current valuation at catalogue prices', 'wallet', 'value')}
+      ${metric('Sold units', m.Sold, 'Total items marked as sold', 'arrow')}
+      ${metric('In repair', m.Repair, 'Awaiting return to available inventory', 'repair')}
+    </div>
+    <div class="overview-grid">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Stock by product</h3>
+            <p>Available units across your catalogue</p>
+          </div>
+          <a class="text-button" href="#products">View all products ${icon('arrow')}</a>
+        </div>
+        ${
+          sorted.length
+            ? sorted
+                .slice(0, 6)
+                .map(
+                  p => `<div class="stock-row">
+                    <span class="product-symbol">${icon('box')}</span>
+                    <div class="description">
+                      <strong>${esc(p.name)}</strong>
+                      <span>${esc(p.sku)}</span>
+                      <div class="bar-track"><span style="width:${Math.round(((counts.get(p.id) || 0) / max) * 100)}%"></span></div>
+                    </div>
+                    <div class="row-value">
+                      <b>${counts.get(p.id) || 0} units</b><br>
+                      <span>${money((counts.get(p.id) || 0) * p.unitValue)}</span>
+                    </div>
+                  </div>`
+                )
+                .join('')
+            : empty(
+                'Your inventory starts here',
+                access().catalogue
+                  ? 'Add your first product model, then receive its physical units.'
+                  : 'An administrator can add products to start receiving inventory.',
+                access().catalogue ? button('Add product', 'add-product') : ''
+              )
+        }
+      </section>
+      <div class="overview-side">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Stock breakdown</h3>
+              <p>${m.total} registered unit${m.total === 1 ? '' : 's'}</p>
+            </div>
+          </div>
+          <div class="distribution">
+            <div class="segments" aria-hidden="true">
+              ${['Available', 'Sold', 'Repair']
+                .map(s => `<span class="segment ${s.toLowerCase()}" style="width:${(m[s] / total) * 100}%"></span>`)
+                .join('')}
+            </div>
+            <div class="legend">
+              ${['Available', 'Sold', 'Repair']
+                .map(
+                  s => `<div>
+                    <span><i class="dot ${s.toLowerCase()}"></i>${s === 'Repair' ? 'In repair' : s}</span>
+                    <b>${m[s]}</b>
+                  </div>`
+                )
+                .join('')}
+            </div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Low stock alerts</h3>
+              <p>Items at or below reorder threshold</p>
+            </div>
+            <span class="badge ${low.length ? 'low' : ''}">${low.length} product${low.length === 1 ? '' : 's'}</span>
+          </div>
+          ${
+            low.length
+              ? `<div class="attention-list">
+                  ${low
+                    .slice(0, 4)
+                    .map(
+                      p => `<div class="attention-row">
+                        <div>
+                          <strong>${esc(p.name)}</strong>
+                          <p>${counts.get(p.id)} available · Reorder at ${p.reorderLevel}</p>
+                        </div>
+                        ${
+                          access().receive
+                            ? `<button class="icon-button" data-action="receive" data-id="${esc(p.id)}" aria-label="Receive ${esc(p.name)}">${icon('plus')}</button>`
+                            : badge('Low')
+                        }
+                      </div>`
+                    )
+                    .join('')}
+                </div>`
+              : empty(
+                  db.products.length ? 'Stock levels optimal' : 'No stock alerts yet',
+                  db.products.length ? 'All catalogue items are above their reorder thresholds.' : 'Alerts appear when a product drops below its reorder level.',
+                  '',
+                  'check'
+                )
+          }
+        </section>
+      </div>
+    </div>
+    ${
+      access().reports
+        ? `<section class="panel activity-preview">
+            <div class="panel-head">
+              <div>
+                <h3>Recent movements</h3>
+                <p>Latest changes recorded by your team</p>
+              </div>
+              <a class="text-button" href="#activity">View full activity ${icon('arrow')}</a>
+            </div>
+            ${
+              db.activities.length
+                ? `<div class="activity-list">${db.activities.slice(0, 4).map(activityRow).join('')}</div>`
+                : empty('No activity recorded', 'Receiving stock, sales, returns, and updates appear here.', '', 'activity')
+            }
+          </section>`
+        : ''
+    }`
+  );
+}
+
+function pagination(result) {
+  return `<div class="pagination">
+    <span>${result.total ? `${(result.page - 1) * 25 + 1}–${Math.min(result.page * 25, result.total)} of ${result.total}` : '0 results'}</span>
+    <div class="pagination-actions">
+      <button class="btn secondary" data-action="previous" ${result.page === 1 ? 'disabled' : ''}>Previous</button>
+      <span>${result.page} / ${result.pages}</span>
+      <button class="btn secondary" data-action="next" ${result.page === result.pages ? 'disabled' : ''}>Next</button>
+    </div>
+  </div>`;
+}
+
+function filterBar(kind, placeholder, extra = '', count = '') {
+  return `<div class="table-toolbar">
+    <div class="toolbar-filters">
+      <label class="search-field">
+        ${icon('search')}
+        <input data-search="${kind}" type="search" aria-label="${placeholder}" placeholder="${placeholder}" value="${esc(filters[kind])}" />
+      </label>
+      ${extra}
+    </div>
+    <span class="count-label">${count}</span>
+  </div>`;
+}
+
+function renderProductsTable() {
+  const q = filters.products.trim().toLowerCase();
+  const list = db.products
+    .filter(p => `${p.name} ${p.sku} ${p.brand} ${p.model} ${p.category}`.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const result = paginate(list, pageNumbers.products);
+  pageNumbers.products = result.page;
+  const counts = new Map();
+  db.units.forEach(u => {
+    if (u.status === 'Available') counts.set(u.productId, (counts.get(u.productId) || 0) + 1);
+  });
+
+  const countText = `${list.length} product${list.length === 1 ? '' : 's'}`;
+  const html = list.length
+    ? `<div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>SKU / Category</th>
+              <th class="numeric">Available</th>
+              <th class="numeric">Unit value</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${result.items
+              .map(
+                p => `<tr>
+                  <td data-label="Product">
+                    <strong>${esc(p.name)}</strong>
+                    <span class="subline">${esc([p.brand, p.model].filter(Boolean).join(' · ') || 'No brand or model')}</span>
+                  </td>
+                  <td data-label="SKU / Category">
+                    <span class="code">${esc(p.sku)}</span>
+                    <span class="subline">${esc(p.category)}</span>
+                  </td>
+                  <td class="numeric" data-label="Available">
+                    <b>${counts.get(p.id) || 0}</b> ${(counts.get(p.id) || 0) <= p.reorderLevel ? badge('Low') : ''}
+                  </td>
+                  <td class="numeric" data-label="Unit value">${money(p.unitValue)}</td>
+                  <td class="actions-cell">
+                    <div class="table-actions">
+                      ${access().catalogue ? `<button class="text-button" data-action="value" data-id="${esc(p.id)}">Edit value</button>` : ''}
+                      ${
+                        access().receive
+                          ? `<button class="text-button" data-action="receive" data-id="${esc(p.id)}">Receive ${icon('plus')}</button>`
+                          : `<button class="text-button" data-action="product-stock" data-id="${esc(p.id)}">View stock ${icon('arrow')}</button>`
+                      }
+                    </div>
+                  </td>
+                </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+      ${pagination(result)}`
+    : empty(
+        q ? 'No matching products' : 'Add your first product',
+        q ? 'Try a different name, brand, or SKU.' : 'Create a catalogue entry before receiving physical stock units.',
+        !q && access().catalogue ? button('Add product', 'add-product') : '',
+        'layers'
+      );
+
+  return { html, countText };
+}
+
+function renderProducts() {
+  const { html, countText } = renderProductsTable();
+  return (
+    header('Products', 'Your catalogue of appliances, furniture, and electronics.', access().catalogue ? button('Add product', 'add-product') : '') +
+    `<section class="panel">
+      ${filterBar('products', 'Search products, brand, or SKU', '', countText)}
+      <div id="products-table-container">${html}</div>
+    </section>`
+  );
+}
+
+function renderStockTable() {
+  const q = filters.stock.trim().toLowerCase();
+  const list = db.units
+    .filter(
+      u =>
+        (!filters.status || u.status === filters.status) &&
+        `${u.code} ${u.serial} ${product(u.productId)?.name} ${product(u.productId)?.sku}`.toLowerCase().includes(q)
+    )
+    .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt) || a.code.localeCompare(b.code));
+  const result = paginate(list, pageNumbers.stock);
+  pageNumbers.stock = result.page;
+
+  const countText = `${list.length} unit${list.length === 1 ? '' : 's'}`;
+  const html = list.length
+    ? `<div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Inventory code</th>
+              <th>Serial number</th>
+              <th>Status</th>
+              <th>Received</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${result.items
+              .map(
+                u => `<tr>
+                  <td data-label="Product">
+                    <strong>${esc(product(u.productId)?.name || 'Unknown product')}</strong>
+                    <span class="subline">${esc(product(u.productId)?.sku)}</span>
+                  </td>
+                  <td data-label="Inventory code" class="code-cell">
+                    <span class="code">${esc(u.code)}</span>
+                  </td>
+                  <td data-label="Serial number"><span class="code">${esc(u.serial || '—')}</span></td>
+                  <td data-label="Status">${badge(u.status)}</td>
+                  <td data-label="Received">${date(u.receivedAt)}</td>
+                  <td class="actions-cell">
+                    <button class="text-button" data-action="unit" data-id="${esc(u.id)}" aria-label="View unit ${esc(u.code)}">
+                      View ${icon('arrow')}
+                    </button>
+                  </td>
+                </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+      ${pagination(result)}`
+    : empty(
+        q || filters.status ? 'No matching stock units' : 'No stock units received yet',
+        q || filters.status ? 'Try another search or select a different status filter.' : 'Receive a product to generate an inventory code for every physical item.',
+        !q && !filters.status && access().receive ? button('Receive stock', 'receive') : ''
+      );
+
+  return { html, countText };
+}
+
+function renderStock() {
+  const { html, countText } = renderStockTable();
+  return (
+    header('Stock units', 'Every physical item, from receiving to its next movement.', access().receive ? button('Receive stock', 'receive') : '') +
+    `<section class="panel">
+      ${filterBar(
+        'stock',
+        'Search code, serial, or product',
+        `<select id="stock-status" aria-label="Filter by stock status">
+          <option value="">All statuses</option>
+          ${['Available', 'Sold', 'Repair'].map(s => `<option ${filters.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>`,
+        countText
+      )}
+      <div id="stock-table-container">${html}</div>
+    </section>`
+  );
+}
+
+function renderActivityTable() {
+  const q = filters.activity.trim().toLowerCase();
+  const list = db.activities.filter(a => `${a.text} ${a.by} ${a.unitCode}`.toLowerCase().includes(q));
+  const result = paginate(list, pageNumbers.activity);
+  pageNumbers.activity = result.page;
+
+  const countText = `${list.length} event${list.length === 1 ? '' : 's'}`;
+  const html = list.length
+    ? `<div class="activity-list">${result.items.map(activityRow).join('')}</div>${pagination(result)}`
+    : empty(
+        q ? 'No matching activity' : 'No activity recorded yet',
+        q ? 'Try a different action, inventory code, or team member.' : 'Stock movements and catalogue changes will appear here.',
+        '',
+        'activity'
+      );
+
+  return { html, countText };
+}
+
+function renderActivity() {
+  const { html, countText } = renderActivityTable();
+  return (
+    header(
+      'Activity log',
+      'Immutable audit trail of stock movements, catalogue updates, and staff access changes.',
+      button('Export CSV', 'export', 'secondary', 'down', db.activities.length ? '' : 'disabled')
+    ) +
+    `<section class="panel">
+      ${filterBar('activity', 'Search action, code, or team member', '', countText)}
+      <div id="activity-table-container">${html}</div>
+    </section>`
+  );
+}
+
+function renderTeam() {
+  return (
+    header('Team & access', 'Manage staff permissions and workspace roles.') +
+    `<div class="provision-note">
+      ${icon('info')} Staff accounts are managed by your administrator. In this workspace, you can configure roles and access status.
+    </div>
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Staff directory</h3>
+          <p>${db.users.length} registered team members</p>
+        </div>
+      </div>
+      <div class="team-grid">
+        ${db.users
+          .map(u => {
+            const isMe = hosted ? u.id === user.id : u.email === user.email;
+            return `<div class="member">
+              <span class="avatar">${esc(initials(u.name))}</span>
+              <div class="member-info">
+                <strong>${esc(u.name)} ${isMe ? '<span class="badge">You</span>' : ''}</strong>
+                <span>${esc(u.email)}</span>
+              </div>
+              <div class="member-badges">
+                ${badge(u.role)}
+                ${u.active === false ? badge('Inactive') : ''}
+                ${
+                  !isMe && access().team
+                    ? `<button class="text-button" data-action="access" data-id="${esc(u.id || u.email)}">Edit access</button>`
+                    : ''
+                }
+                ${
+                  !hosted && !isMe
+                    ? `<button class="btn subtle" data-action="switch-user" data-email="${esc(u.email)}">Switch to role</button>`
+                    : ''
+                }
+              </div>
+            </div>`;
+          })
+          .join('')}
+      </div>
+    </section>
+    <div class="role-reference">
+      <div>
+        <strong>Administrator</strong>
+        <p>Full control: manage product catalogue, unit values, receive stock, export audits, and manage staff roles.</p>
+      </div>
+      <div>
+        <strong>Manager</strong>
+        <p>Operational control: receive stock batches, process sales and returns, complete repairs, and view activity reports.</p>
+      </div>
+      <div>
+        <strong>Worker</strong>
+        <p>Floor staff: view catalogue and stock units, mark items as sold, return items to stock, and report items for repair.</p>
+      </div>
+    </div>`
+  );
+}
+
+function renderPage() {
+  if (!user) return;
+  if (!canView(page)) page = 'overview';
+  $('#page-content').innerHTML = {
+    overview: renderOverview,
+    products: renderProducts,
+    stock: renderStock,
+    activity: renderActivity,
+    team: renderTeam
+  }[page]();
+
+  $('#breadcrumb-page').textContent = pages[page][0];
+  document.title = `${pages[page][0]} · Maxwell Inventory`;
+  $('#navigation').innerHTML = Object.entries(pages)
+    .filter(([id]) => canView(id))
+    .map(
+      ([id, [label, symbol]]) =>
+        `<a class="nav-link" href="#${id}" ${page === id ? 'aria-current="page"' : ''}>
+          ${icon(symbol)}${label}${id === 'stock' ? `<span class="nav-count">${db.units.length}</span>` : ''}
+        </a>`
+    )
+    .join('');
+
+  $('#account-name').textContent = user.name;
+  $('#account-role').textContent = user.role;
+  $('#account-avatar').textContent = initials(user.name);
+  $('#mode-label').textContent = hosted ? 'Connected workspace' : 'Local demo · Sample data';
+  $('#sign-out').hidden = !hosted;
+  $('#sync-status').textContent = lastRefresh
+    ? `Updated ${lastRefresh.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
+    : '';
+  $('#workspace').hidden = false;
+  $('#auth-screen').hidden = true;
+}
+
+function navigate() {
+  const id = location.hash.slice(1);
+  page = id in pages && canView(id) ? id : 'overview';
+  closeDrawer();
+  closeDialog();
+  renderPage();
+}
+
+function openDrawer() {
+  $('#sidebar').classList.add('open');
+  $('#drawer-scrim').hidden = false;
+  $('#open-menu').setAttribute('aria-expanded', 'true');
+  $('#close-menu').focus();
+}
+
+function closeDrawer() {
+  $('#sidebar').classList.remove('open');
+  $('#drawer-scrim').hidden = true;
+  $('#open-menu').setAttribute('aria-expanded', 'false');
+}
+
+function openDialog(title, kicker, content) {
+  stopCamera();
+  modalTrigger = document.activeElement;
+  $('#dialog-title').textContent = title;
+  $('#dialog-kicker').textContent = kicker;
+  $('#dialog-body').innerHTML = content;
+  if (!dialog.open) dialog.showModal();
+  const firstInput = dialog.querySelector('input:not([type=hidden]), select, textarea, button[type=submit]');
+  if (firstInput) setTimeout(() => firstInput.focus(), 50);
+}
+
+function closeDialog() {
+  if (busy) return;
+  stopCamera();
+  if (dialog.open) dialog.close();
+}
+
+function stopCamera() {
+  cameraGeneration++;
+  clearTimeout(cameraTimer);
+  cameraTimer = null;
+  cameraStream?.getTracks().forEach(t => t.stop());
+  cameraStream = null;
+}
+
+function showError(message, root = dialog) {
+  const error = $('.form-error', root);
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = false;
+  error.focus();
+}
+
+const formError = '<p class="form-error" role="alert" tabindex="-1" hidden></p>';
+const formActions = label =>
+  `<div class="form-actions"><button type="button" class="btn secondary" data-action="cancel">Cancel</button><button class="btn primary" type="submit">${label}</button></div>`;
+
+function field(label, name, input, full = false, hint = '') {
+  return `<div class="field ${full ? 'full' : ''}">
+    <label for="field-${name}">${label}</label>
+    ${input.replace('<input', `<input id="field-${name}"`).replace('<select', `<select id="field-${name}"`).replace('<textarea', `<textarea id="field-${name}"`)}
+    ${hint ? `<small>${hint}</small>` : ''}
+  </div>`;
+}
+
+async function mutate(action, payload, success) {
+  if (busy) return false;
+  busy = true;
+  const epoch = authEpoch;
+  const controls = $$('button,input,select,textarea', dialog);
+  const prior = controls.map(c => c.disabled);
+  controls.forEach(c => (c.disabled = true));
+  const submit = $('button[type=submit]', dialog);
+  const oldLabel = submit?.innerHTML;
+  if (submit) submit.innerHTML = '<span class="loading-indicator" aria-hidden="true"></span> Saving…';
+  dialog.setAttribute('aria-busy', 'true');
+  let committed = false;
+
+  try {
+    if (hosted) await command(action, payload);
+    else {
+      const next = demoCommand(db, action, payload, user, localStorage);
+      db = next.db;
+    }
+    committed = true;
+    if (epoch !== authEpoch) return false;
+    dialog.close();
+    stopCamera();
+    if (hosted) {
+      try {
+        await refreshData();
+      } catch {
+        notice('Your change was saved, but inventory could not be refreshed. Refresh before making another change.');
+      }
+    } else {
+      lastRefresh = new Date();
+      renderPage();
+    }
+    toast(success);
+    return true;
+  } catch (error) {
+    if (epoch !== authEpoch) return false;
+    showError(errorMessage(error));
+    if (!committed && ['receive', 'create_product'].includes(action) && /fetch|network|load failed/i.test(error.message || '')) {
+      showError('The response was interrupted. Your request is safe to retry with this form.');
+    }
+    return false;
+  } finally {
+    busy = false;
+    dialog.removeAttribute('aria-busy');
+    controls.forEach((c, i) => (c.disabled = prior[i]));
+    if (submit) submit.innerHTML = oldLabel;
+  }
+}
+
+function addProduct() {
+  if (!access().catalogue) return;
+  openDialog(
+    'Add a product',
+    'Product Catalogue',
+    `<p class="dialog-description">Define a product model. You can receive physical stock units separately afterwards.</p>
+    <form class="form-grid">${formError}
+      ${field('Product name *', 'name', '<input name="name" maxlength="200" required placeholder="e.g. Samsung 55-inch TV" />', true)}
+      ${field('SKU *', 'sku', '<input name="sku" maxlength="100" required placeholder="e.g. SAM-TV-55" />')}
+      ${field('Category', 'category', '<select name="category"><option>Appliances</option><option>Electronics</option><option>Furniture</option><option>Other</option></select>')}
+      ${field('Brand', 'brand', '<input name="brand" maxlength="120" placeholder="Optional" />')}
+      ${field('Model', 'model', '<input name="model" maxlength="120" placeholder="Optional" />')}
+      ${field('Unit value (LKR) *', 'unitValue', '<input name="unitValue" type="number" min="0" max="999999999999.99" step="0.01" required value="0" />')}
+      ${field('Reorder level *', 'reorderLevel', '<input name="reorderLevel" type="number" min="0" max="2147483647" step="1" required value="2" />', false, 'Trigger an alert when available stock drops to this level.')}
+      ${formActions('Add product')}
+    </form>`
+  );
+  const requestId = crypto.randomUUID();
+  $('form', dialog).onsubmit = e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const p = {
+      name: f.get('name').trim(),
+      sku: f.get('sku').trim().toUpperCase(),
+      category: f.get('category'),
+      brand: f.get('brand').trim(),
+      model: f.get('model').trim(),
+      unitValue: Number(f.get('unitValue')),
+      reorderLevel: Number(f.get('reorderLevel')),
+      requestId
+    };
+    const error = validateProduct(p, db.products);
+    if (error) return showError(error);
+    mutate('create_product', p, 'Product added to catalogue.');
+  };
+}
+
+function valueModal(id) {
+  if (!access().catalogue) return;
+  const p = product(id);
+  if (!p) return;
+  openDialog(
+    'Edit unit value',
+    'Product Valuation',
+    `<p class="dialog-description"><strong>${esc(p.name)}</strong> (${esc(p.sku)})<br>This updated value applies to all available stock units of this product.</p>
+    <form class="form-grid">${formError}
+      ${field('Unit value (LKR) *', 'value', `<input name="value" type="number" min="0" max="999999999999.99" step="0.01" required value="${Number(p.unitValue)}" />`, true)}
+      ${formActions('Save value')}
+    </form>`
+  );
+  $('form', dialog).onsubmit = e => {
+    e.preventDefault();
+    const value = Number(new FormData(e.target).get('value'));
+    const error = validateValue(value);
+    if (error) return showError(error);
+    mutate('set_value', { id, value }, 'Product value updated.');
+  };
+}
+
+function receiveModal(id = '') {
+  if (!access().receive) return;
+  if (!db.products.length) {
+    openDialog(
+      'Add a product first',
+      'Stock Intake',
+      empty(
+        'Catalogue is empty',
+        access().catalogue ? 'Create a product before receiving physical stock.' : 'Ask an administrator to add a product to the catalogue.',
+        access().catalogue ? button('Add product', 'add-product') : button('Close', 'cancel', 'secondary', '')
+      )
+    );
+    return;
+  }
+  openDialog(
+    'Receive stock',
+    'Stock Intake',
+    `<p class="dialog-description">Each received item receives a unique inventory code. Receive up to 100 units per batch.</p>
+    <form class="form-grid">${formError}
+      ${field(
+        'Product *',
+        'productId',
+        `<select name="productId" required>
+          <option value="">Select a product</option>
+          ${[...db.products]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(p => `<option value="${esc(p.id)}" ${p.id === id ? 'selected' : ''}>${esc(p.name)} · ${esc(p.sku)}</option>`)
+            .join('')}
+        </select>`,
+        true
+      )}
+      ${field('Quantity *', 'quantity', '<input name="quantity" type="number" min="1" max="100" step="1" value="1" required />')}
+      ${field('Supplier / PO reference', 'reference', '<input name="reference" maxlength="200" placeholder="Optional PO or supplier ref" />')}
+      ${field('Serial numbers', 'serials', '<textarea name="serials" rows="3" placeholder="SN-001&#10;SN-002"></textarea>', true, 'Optional. Enter one serial per line. Remaining units will be recorded without serials.')}
+      ${formActions('Receive stock')}
+    </form>`
+  );
+  const requestId = crypto.randomUUID();
+  $('form', dialog).onsubmit = e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const p = {
+      productId: f.get('productId'),
+      quantity: Number(f.get('quantity')),
+      serials: f
+        .get('serials')
+        .split('\n')
+        .map(s => s.trim())
+        .filter(Boolean),
+      reference: f.get('reference').trim(),
+      requestId
+    };
+    const error = validateReceipt(p, db);
+    if (error) return showError(error);
+    mutate('receive', p, `${p.quantity} stock unit${p.quantity === 1 ? '' : 's'} received.`);
+  };
+}
+
+function unitModal(id) {
+  const u = db.units.find(u => u.id === id);
+  if (!u) return;
+  const p = product(u.productId);
+  const actions = transitions(u.status, user.role);
+
+  openDialog(
+    'Stock unit',
+    'Item Details',
+    `<p class="detail-product">${esc(p?.name || 'Unknown product')}</p>
+    <p class="dialog-description">${esc(p?.sku || '')}</p>
+    <div class="detail-code">
+      <code>${esc(u.code)}</code>
+      <button class="icon-button" data-action="copy" data-code="${esc(u.code)}" aria-label="Copy inventory code">${icon('copy')}</button>
+    </div>
+    <dl class="details">
+      <div><dt>Status</dt><dd>${badge(u.status)}</dd></div>
+      <div><dt>Serial number</dt><dd>${esc(u.serial || 'Not recorded')}</dd></div>
+      <div><dt>Received</dt><dd>${date(u.receivedAt)}</dd></div>
+      <div><dt>Reference</dt><dd>${esc(u.reference || 'Not recorded')}</dd></div>
+      <div><dt>Unit value</dt><dd>${money(p?.unitValue)}</dd></div>
+    </dl>
+    ${formError}
+    ${
+      actions.length
+        ? `<div class="unit-actions">
+            ${actions
+              .map((a, i) =>
+                button(
+                  a.label,
+                  'confirm-transition',
+                  i === 0 ? 'primary' : 'secondary',
+                  a.status === 'Repair' ? 'repair' : a.status === 'Sold' ? 'arrow' : 'refresh',
+                  `data-id="${esc(u.id)}" data-status="${a.status}"`
+                )
+              )
+              .join('')}
+          </div>`
+        : '<p class="notice">This item is currently undergoing repair. A manager or administrator can return it to stock when ready.</p>'
+    }`
+  );
+}
+
+function confirmTransition(id, status) {
+  const u = db.units.find(u => u.id === id);
+  const a = u && transitions(u.status, user.role).find(a => a.status === status);
+  if (!a) return;
+  openDialog(
+    a.label,
+    'Confirm Stock Change',
+    `<p class="dialog-description">
+      <strong>${esc(product(u.productId)?.name)}</strong><br>
+      <span class="code">${esc(u.code)}</span>
+    </p>
+    <dl class="details">
+      <div><dt>Current status</dt><dd>${badge(u.status)}</dd></div>
+      <div><dt>New status</dt><dd>${badge(status)}</dd></div>
+    </dl>
+    <form class="form-grid">${formError}${formActions(a.label)}</form>`
+  );
+  $('form', dialog).onsubmit = e => {
+    e.preventDefault();
+    mutate('transition', { id, status, version: u.version }, `Item updated to ${status.toLowerCase()}.`);
+  };
+}
+
+function accessModal(id) {
+  if (!access().team) return;
+  const u = db.users.find(u => (u.id || u.email) === id);
+  if (!u || id === (user.id || user.email)) return;
+  openDialog(
+    'Edit staff access',
+    'Team Permissions',
+    `<p class="dialog-description"><strong>${esc(u.name)}</strong><br>${esc(u.email)}</p>
+    <form class="form-grid">${formError}
+      ${field('Role', 'role', `<select name="role">${ROLES.map(r => `<option ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select>`, true)}
+      <label class="check-field field full">
+        <input name="active" type="checkbox" ${u.active !== false ? 'checked' : ''} /> Account has active staff access
+      </label>
+      <p class="dialog-description field full">Deactivating an account suspends access immediately without erasing past audit history.</p>
+      ${formActions('Save access')}
+    </form>`
+  );
+  $('form', dialog).onsubmit = e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    mutate('set_access', { id, role: f.get('role'), active: f.get('active') === 'on' }, 'Staff access updated.');
+  };
+}
+
+function lookup() {
+  openDialog(
+    'Find or scan an item',
+    'Lookup & Scanner',
+    `<p class="dialog-description">Enter an inventory code or manufacturer serial number. You can also scan with a handheld scanner or camera.</p>
+    <form class="lookup-form">
+      <div class="field">
+        <label for="lookup-code">Inventory code or serial number</label>
+        <input id="lookup-code" name="code" autocomplete="off" required placeholder="e.g. MSM-8F4A7C or serial number" />
+      </div>
+      <button class="btn primary" type="submit">Find item</button>
+    </form>
+    <div style="margin-top:14px">${formError}</div>
+    <div class="scan-buttons">${button('Scan with camera', 'camera', 'secondary', 'camera')}</div>
+    <div class="scanner-area" hidden>
+      <video class="scanner-video" playsinline muted></video>
+      <p class="scanner-hint" role="status">Starting camera…</p>
+    </div>`
+  );
+  $('form', dialog).onsubmit = e => {
+    e.preventDefault();
+    lookupResult(new FormData(e.target).get('code'));
+  };
+  $('#lookup-code')?.focus();
+}
+
+function lookupResult(value) {
+  const unit = findUnit(db.units, value);
+  if (!unit) {
+    showError('No matching stock item found. Verify the code or serial number, or refresh inventory.');
+    return false;
+  }
+  unitModal(unit.id);
+  return true;
+}
+
+async function startCamera() {
+  const area = $('.scanner-area', dialog);
+  if (!area || cameraStream) return;
+  area.hidden = false;
+  const hint = $('.scanner-hint', dialog);
+  const video = $('video', dialog);
+  const trigger = $('[data-action=camera]', dialog);
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    hint.textContent = 'Camera hardware access is unavailable. Please type or paste the code above.';
+    return;
+  }
+  stopCamera();
+  const generation = cameraGeneration;
+  if (trigger) trigger.disabled = true;
+
+  try {
+    let detector = null;
+    let decode = null;
+    if ('BarcodeDetector' in window) {
+      try {
+        const formats = await window.BarcodeDetector.getSupportedFormats();
+        if (formats.includes('qr_code')) detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      } catch {}
+    }
+    if (!detector) decode = (await import('jsqr')).default;
+    if (generation !== cameraGeneration || !dialog.open) return;
+
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    if (generation !== cameraGeneration || !dialog.open) {
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+    cameraStream = stream;
+    video.srcObject = stream;
+    await video.play();
+    hint.textContent = 'Hold barcode or QR code in front of camera.';
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    let lastCode = '';
+
+    const scan = async () => {
+      if (generation !== cameraGeneration || !dialog.open) return;
+      try {
+        let code = '';
+        if (video.readyState >= 2) {
+          if (detector) {
+            code = (await detector.detect(video))[0]?.rawValue || '';
+          } else {
+            const scale = Math.min(1, 640 / video.videoWidth);
+            canvas.width = Math.round(video.videoWidth * scale);
+            canvas.height = Math.round(video.videoHeight * scale);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            code = decode(data.data, data.width, data.height)?.data || '';
+          }
+        }
+        if (generation !== cameraGeneration || !dialog.open) return;
+        if (code && code !== lastCode) {
+          lastCode = code;
+          if (lookupResult(code)) return;
+        }
+      } catch {
+        hint.textContent = 'Scanning frame… Hold steady, or type the code above.';
+      }
+      if (generation === cameraGeneration) cameraTimer = setTimeout(scan, 250);
+    };
+    scan();
+  } catch {
+    if (generation === cameraGeneration) {
+      stopCamera();
+      hint.textContent = 'Camera access was denied or unavailable. Enter the code manually above.';
+    }
+  } finally {
+    if (trigger?.isConnected) trigger.disabled = false;
+  }
+}
+
+function exportActivity() {
+  if (!access().reports) return;
+  const records = db.activities.filter(a => `${a.text} ${a.by} ${a.unitCode}`.toLowerCase().includes(filters.activity.trim().toLowerCase()));
+  const lines = [
+    ['Date', 'Action', 'Unit code', 'Performed by'],
+    ...records.map(a => [a.at, a.text, a.unitCode, a.by])
+  ];
+  const blob = new Blob(['\uFEFF' + lines.map(row => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'maxwell-inventory-activity.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`${records.length} activity records exported.`);
+}
+
+async function refreshData() {
+  if (refreshing) return;
+  refreshing = true;
+  const epoch = authEpoch;
+  $('#refresh-data').disabled = true;
+
+  try {
+    if (hosted) {
+      const next = await snapshot();
+      if (epoch !== authEpoch) return;
+      db = next.db;
+      user = next.profile;
+    } else {
+      const next = loadDemo(localStorage);
+      db = next.db;
+      if (next.warning) notice(next.warning);
+    }
+    if (epoch !== authEpoch) return;
+    lastRefresh = new Date();
+    notice();
+    renderPage();
+  } catch (error) {
+    if (epoch !== authEpoch) return;
+    if (['NO_ACCESS', 'SIGNED_OUT'].includes(error.code) || error.status === 401 || error.status === 403) {
+      lock(errorMessage(error));
+    } else if (user) {
+      notice('Inventory could not be refreshed. Displayed data may be out of date. ' + errorMessage(error));
+    }
+    throw error;
+  } finally {
+    refreshing = false;
+    $('#refresh-data').disabled = false;
+  }
+}
+
+function lock(message = '', isError = false) {
+  authEpoch++;
+  stopCamera();
+  dialog.close();
+  closeDrawer();
+  user = null;
+  db = emptyDatabase();
+  lastRefresh = null;
+  filters = { products: '', stock: '', status: '', activity: '' };
+  pageNumbers = { products: 1, stock: 1, activity: 1 };
+  $('#workspace').hidden = true;
+  $('#auth-screen').hidden = false;
+  $('#page-content').replaceChildren();
+  $('#navigation').replaceChildren();
+  $('#dialog-body').replaceChildren();
+  $('#account-name').textContent = '';
+  $('#account-role').textContent = '';
+  $('#account-avatar').textContent = '';
+  $('#auth-message').textContent = message;
+  $('#auth-message').hidden = !message;
+  $('#auth-message').classList.toggle('error', isError);
+  $('#clear-session').hidden = !hosted;
+  document.title = 'Sign in · Maxwell Inventory';
+}
+
+async function logout() {
+  if (busy) return;
+  lock('Signing out…');
+  const { error } = await client.auth.signOut({ scope: 'local' });
+  lock(error ? 'Sign-out could not finish. Try “Sign out of this session” again.' : 'You have been signed out.', Boolean(error));
+}
+
+async function onAction(event) {
+  const target = event.target.closest('[data-action]');
+  if (!target || target.disabled) return;
+  const { action, id, status, email } = target.dataset;
+  if (busy) return;
+
+  if (action === 'cancel') return closeDialog();
+  if (!user) return;
+
+  if (action === 'add-product') addProduct();
+  if (action === 'receive') receiveModal(id);
+  if (action === 'value') valueModal(id);
+  if (action === 'unit') unitModal(id);
+  if (action === 'confirm-transition') confirmTransition(id, status);
+  if (action === 'access') accessModal(id);
+  if (action === 'camera') startCamera();
+  if (action === 'export') exportActivity();
+  if (action === 'product-stock') {
+    filters.stock = product(id)?.sku || '';
+    pageNumbers.stock = 1;
+    location.hash = 'stock';
+    navigate();
+  }
+  if (action === 'switch-user' && email) {
+    const targetUser = db.users.find(u => u.email === email);
+    if (targetUser) {
+      user = { ...targetUser };
+      renderPage();
+      toast(`Switched to ${user.name} (${user.role})`);
+    }
+  }
+  if (action === 'previous' || action === 'next') {
+    pageNumbers[page] += action === 'next' ? 1 : -1;
+    renderPage();
+  }
+  if (action === 'copy') {
+    try {
+      await navigator.clipboard.writeText(target.dataset.code);
+      toast('Inventory code copied to clipboard.');
+    } catch {
+      showError('Clipboard unavailable. Select and copy the inventory code above.');
+    }
+  }
+}
+
+function bind() {
+  $('#open-menu').innerHTML = icon('menu');
+  $('#close-menu').innerHTML = icon('close');
+  $('#close-dialog').innerHTML = icon('close');
+  $('#sign-out').innerHTML = icon('logout');
+  $('#refresh-data').innerHTML = icon('refresh');
+  $('#find-item').innerHTML = icon('scan') + 'Find / Scan';
+  $('#find-item').setAttribute('aria-label', 'Find or scan an item');
+
+  $('#find-item').onclick = lookup;
+  $('#open-menu').onclick = openDrawer;
+  $('#close-menu').onclick = closeDrawer;
+  $('#drawer-scrim').onclick = closeDrawer;
+  $('#close-dialog').onclick = closeDialog;
+
+  // Dialog backdrop click closes modal
+  dialog.addEventListener('click', e => {
+    if (e.target === dialog && !busy) closeDialog();
+  });
+
+  dialog.addEventListener('cancel', e => {
+    if (busy) e.preventDefault();
+  });
+
+  dialog.addEventListener('close', () => {
+    stopCamera();
+    modalTrigger?.isConnected && modalTrigger.focus();
+  });
+
+  document.addEventListener('keydown', e => {
+    if ($('#sidebar').classList.contains('open')) {
+      if (e.key === 'Escape') {
+        closeDrawer();
+        $('#open-menu').focus();
+      }
+      if (e.key === 'Tab') {
+        const controls = $$('a,button:not([hidden])', $('#sidebar')).filter(el => el.getClientRects().length);
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
+  });
+
+  document.addEventListener('click', onAction);
+
+  // Smooth inline search updates without destroying the input DOM element
+  $('#page-content').addEventListener('input', e => {
+    const key = e.target.dataset.search;
+    if (!key) return;
+    filters[key] = e.target.value;
+    pageNumbers[key] = 1;
+
+    if (key === 'products') {
+      const container = $('#products-table-container');
+      const countLabel = $('.count-label', $('#page-content'));
+      if (container) {
+        const { html, countText } = renderProductsTable();
+        container.innerHTML = html;
+        if (countLabel) countLabel.textContent = countText;
+      }
+    } else if (key === 'stock') {
+      const container = $('#stock-table-container');
+      const countLabel = $('.count-label', $('#page-content'));
+      if (container) {
+        const { html, countText } = renderStockTable();
+        container.innerHTML = html;
+        if (countLabel) countLabel.textContent = countText;
+      }
+    } else if (key === 'activity') {
+      const container = $('#activity-table-container');
+      const countLabel = $('.count-label', $('#page-content'));
+      if (container) {
+        const { html, countText } = renderActivityTable();
+        container.innerHTML = html;
+        if (countLabel) countLabel.textContent = countText;
+      }
+    }
+  });
+
+  $('#page-content').addEventListener('change', e => {
+    if (e.target.id === 'stock-status') {
+      filters.status = e.target.value;
+      pageNumbers.stock = 1;
+      const container = $('#stock-table-container');
+      const countLabel = $('.count-label', $('#page-content'));
+      if (container) {
+        const { html, countText } = renderStockTable();
+        container.innerHTML = html;
+        if (countLabel) countLabel.textContent = countText;
+      }
+    }
+  });
+
+  window.addEventListener('hashchange', navigate);
+  window.addEventListener('offline', () => {
+    if (user) notice('You are offline. Inventory data may be stale; reconnect before making changes.');
+  });
+  window.addEventListener('online', () => {
+    if (user) notice('Connection restored. Refresh inventory to load the latest changes.');
+  });
+
+  $('#refresh-data').onclick = async () => {
+    if (busy) return;
+    try {
+      await refreshData();
+      toast('Inventory updated.');
+    } catch {}
+  };
+
+  $('#sign-out').onclick = logout;
+  $('#clear-session').onclick = logout;
+
+  $('#show-password').onclick = () => {
+    const p = $('#login-password');
+    const show = p.type === 'password';
+    p.type = show ? 'text' : 'password';
+    $('#show-password').textContent = show ? 'Hide' : 'Show';
+    $('#show-password').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  };
+
+  $('#login-form').onsubmit = async e => {
+    e.preventDefault();
+    if (!client || $('#login-submit').disabled) return;
+    $('#login-submit').disabled = true;
+    $('#login-submit').innerHTML = '<span class="loading-indicator" aria-hidden="true"></span> Signing in…';
+    $('#auth-message').hidden = true;
+    try {
+      const f = new FormData(e.target);
+      const { error } = await client.auth.signInWithPassword({
+        email: f.get('email').trim(),
+        password: f.get('password')
+      });
+      if (error) throw error;
+      await refreshData();
+      e.target.reset();
+      page = 'overview';
+      navigate();
+    } catch (error) {
+      lock(errorMessage(error), true);
+    } finally {
+      $('#login-submit').disabled = false;
+      $('#login-submit').textContent = 'Sign in';
+    }
+  };
+}
+
+async function initialize() {
+  bind();
+  if (configurationError) {
+    lock(configurationError, true);
+    $('#clear-session').hidden = true;
+    return;
+  }
+
+  if (!hosted) {
+    const initial = loadDemo(localStorage);
+    db = initial.db;
+    user = { ...db.users.find(u => u.role === 'Administrator'), role: 'Administrator' };
+    if (!user.name) user = { name: 'Demo Administrator', email: 'demo@maxwell.example', role: 'Administrator' };
+    lastRefresh = new Date();
+    navigate();
+    if (initial.warning) notice(initial.warning);
+    return;
+  }
+
+  client.auth.onAuthStateChange(event => {
+    if (event === 'SIGNED_OUT') lock('You have been signed out.');
+  });
+
+  try {
+    await refreshData();
+    navigate();
+  } catch (error) {
+    lock(error.code === 'SIGNED_OUT' ? '' : errorMessage(error), error.code !== 'SIGNED_OUT');
+  } finally {
+    $('#login-submit').disabled = false;
+  }
+}
+
+initialize();
