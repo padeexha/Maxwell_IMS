@@ -24,6 +24,8 @@ _BOLD_FONT_PATHS = [
     "/System/Library/Fonts/HelveticaNeue.ttc",
     "/System/Library/Fonts/Helvetica.ttc",
     "/Library/Fonts/Arial Bold.ttf",
+    r"C:\Windows\Fonts\arialbd.ttf",
+    r"C:\Windows\Fonts\arial.ttf",
     # Ubuntu font paths
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -223,6 +225,52 @@ def validate_labels(labels):
             raise ValueError("Label codes must be text between 1 and 200 characters")
 
 
+def get_installed_printers():
+    """Return installed printers on Windows or macOS/Linux CUPS systems."""
+    if os.name == "nt":
+        import win32print
+        flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+        return [entry[2] for entry in win32print.EnumPrinters(flags)]
+    result = subprocess.run(["lpstat", "-p"], capture_output=True, text=True, timeout=5)
+    return [line.split()[1] for line in result.stdout.splitlines()
+            if line.startswith("printer ") and len(line.split()) > 1]
+
+
+def get_default_printer():
+    if os.name == "nt":
+        import win32print
+        return win32print.GetDefaultPrinter()
+    result = subprocess.run(["lpstat", "-d"], capture_output=True, text=True, timeout=5)
+    prefix = "system default destination:"
+    return result.stdout.split(prefix, 1)[1].strip() if prefix in result.stdout else ""
+
+
+def send_raw_to_printer(printer, zpl):
+    """Send raw ZPL bytes through the platform's native print spooler."""
+    if os.name == "nt":
+        import win32print
+        handle = win32print.OpenPrinter(printer)
+        job = None
+        page_started = False
+        try:
+            job = win32print.StartDocPrinter(handle, 1, ("Maxwell Inventory Labels", None, "RAW"))
+            win32print.StartPagePrinter(handle)
+            page_started = True
+            win32print.WritePrinter(handle, zpl.encode("utf-8"))
+        finally:
+            if page_started:
+                win32print.EndPagePrinter(handle)
+            if job is not None:
+                win32print.EndDocPrinter(handle)
+            win32print.ClosePrinter(handle)
+        return
+    subprocess.run(["cupsenable", printer], capture_output=True, timeout=5)
+    proc = subprocess.run(["lpr", "-l", "-P", printer], input=zpl.encode("utf-8"),
+                          capture_output=True, timeout=10)
+    if proc.returncode != 0:
+        raise RuntimeError("lpr error: " + proc.stderr.decode(errors="replace"))
+
+
 class PrintServerHandler(http.server.BaseHTTPRequestHandler):
     api_key = ""
     allowed_origins = set(DEFAULT_ALLOWED_ORIGINS.split(","))
@@ -308,11 +356,7 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
             return
         if self.path == '/printers':
             try:
-                result = subprocess.run(["lpstat", "-p"], capture_output=True, text=True, timeout=5)
-                printers = []
-                for line in result.stdout.splitlines():
-                    if line.startswith("printer "):
-                        printers.append(line.split()[1])
+                printers = get_installed_printers()
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
@@ -416,20 +460,16 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
             # Try system default destination
             if not printer:
                 try:
-                    result = subprocess.run(["lpstat", "-d"], capture_output=True, text=True, timeout=5)
-                    if "system default destination:" in result.stdout:
-                        printer = result.stdout.split("system default destination:")[1].strip()
+                    printer = get_default_printer()
                 except Exception:
                     pass
 
             # Fallback to first printer in list
             if not printer:
                 try:
-                    result = subprocess.run(["lpstat", "-p"], capture_output=True, text=True, timeout=5)
-                    for line in result.stdout.splitlines():
-                        if line.startswith("printer "):
-                            printer = line.split()[1]
-                            break
+                    printers = get_installed_printers()
+                    if printers:
+                        printer = printers[0]
                 except Exception:
                     pass
 
@@ -442,7 +482,10 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
             if not printer:
                 self.send_response(400)
                 self.end_headers()
-                self.wfile.write(b"No CUPS printer found. Please add a thermal printer in macOS System Settings > Printers & Scanners, or use Browser Print / PDF.")
+                message = ("No Windows printer found. Add a ZPL-compatible thermal printer in Settings > Bluetooth & devices > Printers & scanners."
+                           if os.name == "nt" else
+                           "No CUPS printer found. Add a thermal printer in macOS System Settings > Printers & Scanners, or use Browser Print / PDF.")
+                self.wfile.write(message.encode())
                 return
 
             # Support direct TCP socket printing (e.g. 192.168.1.50:9100)
@@ -463,23 +506,12 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(f"Network printer connection error ({printer}): {e}".encode())
                     return
 
-            # Enable queue and send print job via CUPS
-            subprocess.run(["cupsenable", printer], capture_output=True)
+            # Submit raw ZPL to the Windows spooler or CUPS.
             try:
-                proc = subprocess.run(
-                    ["lpr", "-l", "-P", printer],
-                    input=zpl.encode("utf-8"),
-                    capture_output=True,
-                    timeout=10
-                )
-                if proc.returncode == 0:
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(f"Printed successfully on {printer}".encode())
-                else:
-                    self.send_response(500)
-                    self.end_headers()
-                    self.wfile.write(f"lpr error: {proc.stderr.decode()}".encode())
+                send_raw_to_printer(printer, zpl)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(f"Printed successfully on {printer}".encode())
             except Exception as e:
                 self.send_response(500)
                 self.end_headers()
