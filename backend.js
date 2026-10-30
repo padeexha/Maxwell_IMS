@@ -19,7 +19,7 @@ async function rows(table) {
 }
 export async function snapshot() {
  const {data:{user},error}=await client.auth.getUser();
- if(error) throw error;
+ if(error){if(error.name==='AuthSessionMissingError')throw Error('Sign in to access your inventory.');throw error;}
  if(!user) throw Error('Please sign in.');
  const {data:profile,error:profileError}=await client.from('profiles').select('*').eq('id',user.id).single();
  if(profileError || !profile?.active) throw Error('Your account has no active staff access. Contact an administrator.');

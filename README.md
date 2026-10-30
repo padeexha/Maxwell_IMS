@@ -80,7 +80,7 @@ npm test
 npm run build
 ```
 
-Database tests run the actual migration in embedded PostgreSQL (PGlite), with Auth roles and `auth.uid()` simulated. They exercise RLS, direct-write denials, role escalation denial, immutable audit records, inactive/unprovisioned users, duplicate SKU/serial constraints, batch rollback, valid transitions and stale-version rejection. They do not replace a real Supabase Auth/PostgREST integration test or a concurrent multi-connection load test. Both demo and Supabase production bundles were built locally; the demo receipt dialog was checked in a browser. A live Supabase/Vercel deployment has not been performed.
+Database tests run the actual migration in embedded PostgreSQL (PGlite), with Auth roles and `auth.uid()` simulated. They exercise RLS, direct-write denials, role escalation denial, immutable audit records, inactive/unprovisioned users, duplicate SKU/serial constraints, batch rollback, valid transitions and stale-version rejection. They do not replace a real Supabase Auth/PostgREST integration test or a concurrent multi-connection load test. Both demo and Supabase production bundles were built locally; the demo receipt dialog was checked in a browser. Production is deployed at https://maxwell-ims.vercel.app with GitHub continuous deployment from `main`. The migration is applied to Supabase project `iljvzokqxnicrzyaikkk`; RLS and anonymous/direct-write denials were checked on the hosted database. Public and anonymous signup are disabled. An administrator account is provisioned. The live login page was verified; authenticated end-to-end workflows still require user sign-in and staging validation. Preview deployments use demo mode.
 
 ## Printing
 
