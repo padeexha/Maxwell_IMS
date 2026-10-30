@@ -1909,6 +1909,211 @@ body:has(dialog[open]) {
   }
 }
 
+/* ==========================================================================
+   Sticker Label & Thermal Print Styles
+   ========================================================================== */
+
+.sticker-card {
+  box-sizing: border-box;
+  background: #ffffff;
+  color: #000000;
+  border: 1px solid #1e293b;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+.sticker-card.size-50x30 {
+  width: 50mm;
+  height: 30mm;
+  min-width: 50mm;
+  min-height: 30mm;
+  max-width: 50mm;
+  max-height: 30mm;
+}
+
+.sticker-card.size-50x25 {
+  width: 50mm;
+  height: 25mm;
+  min-width: 50mm;
+  min-height: 25mm;
+  max-width: 50mm;
+  max-height: 25mm;
+  padding: 5px 8px;
+  gap: 8px;
+}
+
+.sticker-card.size-40x30 {
+  width: 40mm;
+  height: 30mm;
+  min-width: 40mm;
+  min-height: 30mm;
+  max-width: 40mm;
+  max-height: 30mm;
+  padding: 6px 8px;
+  gap: 6px;
+}
+
+.sticker-qr {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sticker-qr svg {
+  width: 22mm;
+  height: 22mm;
+  display: block;
+}
+
+.size-50x25 .sticker-qr svg {
+  width: 17mm;
+  height: 17mm;
+}
+
+.size-40x30 .sticker-qr svg {
+  width: 17mm;
+  height: 17mm;
+}
+
+.sticker-details {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.sticker-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  line-height: 1;
+}
+
+.sticker-brand {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.sticker-tag {
+  font-size: 7px;
+  font-weight: 700;
+  background: #000000;
+  color: #ffffff;
+  padding: 1px 4px;
+  border-radius: 2px;
+  letter-spacing: 0.05em;
+}
+
+.sticker-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 1px 0;
+}
+
+.sticker-name {
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 26mm;
+}
+
+.sticker-meta {
+  font-size: 7px;
+  font-family: var(--font-mono);
+  color: #333333;
+  line-height: 1.2;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.print-preview-box {
+  background: var(--surface-subtle);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+
+.print-preview-box .sticker-card {
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.1);
+}
+
+.print-preview-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  max-height: 280px;
+  overflow-y: auto;
+  width: 100%;
+  padding: 6px;
+}
+
+.print-area {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: auto;
+    margin: 0;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body > *:not(.print-area),
+  #auth-screen,
+  #workspace,
+  dialog,
+  #toasts,
+  .skip-link {
+    display: none !important;
+  }
+
+  .print-area {
+    display: block !important;
+    position: static;
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+  }
+
+  .print-area .sticker-card {
+    page-break-after: always;
+    break-after: page;
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+  }
+}
+
 /* Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

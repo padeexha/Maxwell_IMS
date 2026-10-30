@@ -15,6 +15,7 @@ import {
 } from './src/domain.js';
 import { loadDemo, demoCommand } from './src/demo.js';
 import { icon } from './src/icons.js';
+import QRCode from 'qrcode';
 
 // DOM Selectors & Utilities
 const $ = (s, root = document) => root.querySelector(s);
@@ -422,9 +423,14 @@ function renderStockTable() {
                   <td data-label="Status">${badge(u.status)}</td>
                   <td data-label="Received">${date(u.receivedAt)}</td>
                   <td class="actions-cell">
-                    <button class="text-button" data-action="unit" data-id="${esc(u.id)}" aria-label="View unit ${esc(u.code)}">
-                      View ${icon('arrow')}
-                    </button>
+                    <div class="table-actions">
+                      <button class="icon-button" data-action="print-unit-sticker" data-id="${esc(u.id)}" aria-label="Print sticker for ${esc(u.code)}" title="Print sticker">
+                        ${icon('printer')}
+                      </button>
+                      <button class="text-button" data-action="unit" data-id="${esc(u.id)}" aria-label="View unit ${esc(u.code)}">
+                        View ${icon('arrow')}
+                      </button>
+                    </div>
                   </td>
                 </tr>`
               )
@@ -445,7 +451,14 @@ function renderStockTable() {
 function renderStock() {
   const { html, countText } = renderStockTable();
   return (
-    header('Stock units', 'Every physical item, from receiving to its next movement.', access().receive ? button('Receive stock', 'receive') : '') +
+    header(
+      'Stock units',
+      'Every physical item, from receiving to its next movement.',
+      `<div class="header-meta">
+        ${button('Print stickers', 'print-visible-stickers', 'secondary', 'printer')}
+        ${access().receive ? button('Receive stock', 'receive') : ''}
+      </div>`
+    ) +
     `<section class="panel">
       ${filterBar(
         'stock',
@@ -705,6 +718,116 @@ async function mutate(action, payload, success) {
   }
 }
 
+async function generateStickerHtml(unit, size = '50x30') {
+  const p = product(unit.productId);
+  let qrSvg = '';
+  try {
+    qrSvg = await QRCode.toString(unit.code, {
+      type: 'svg',
+      margin: 0,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#000000', light: '#ffffff' }
+    });
+  } catch {
+    qrSvg = `<div style="font-size:9px;text-align:center;padding:4px;">${esc(unit.code)}</div>`;
+  }
+
+  return `<div class="sticker-card size-${size}" data-code="${esc(unit.code)}">
+    <div class="sticker-qr">${qrSvg}</div>
+    <div class="sticker-details">
+      <div class="sticker-brand-row">
+        <span class="sticker-brand">MAXWELL</span>
+        <span class="sticker-tag">STOCK</span>
+      </div>
+      <div class="sticker-code">${esc(unit.code)}</div>
+      <div class="sticker-name" title="${esc(p?.name || '')}">${esc(p?.name || 'Stock Item')}</div>
+      <div class="sticker-meta">
+        <span>SKU: ${esc(p?.sku || '—')}</span>
+        ${unit.serial ? `<span>SN: ${esc(unit.serial)}</span>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function openStickerPrinter(units, title = 'Print Sticker') {
+  if (!units || !units.length) return;
+  let currentSize = '50x30';
+  const isBatch = units.length > 1;
+
+  const renderPreview = async size => {
+    const cards = await Promise.all(units.map(u => generateStickerHtml(u, size)));
+    return cards.join('');
+  };
+
+  const initialPreview = await renderPreview(currentSize);
+
+  const content = `
+    <p class="dialog-description">
+      ${isBatch ? `Ready to print labels for <strong>${units.length} physical units</strong>.` : `Standard thermal barcode sticker with scannable QR code for <strong>${esc(units[0].code)}</strong>.`}
+      Optimized for thermal label printers and standard printer sheets. No external print server required.
+    </p>
+    <div class="print-preview-box">
+      <div class="print-preview-list" id="preview-stickers-list">
+        ${initialPreview}
+      </div>
+    </div>
+    <form class="form-grid" id="sticker-print-form">
+      ${field(
+        'Label size & format',
+        'labelSize',
+        `<select name="labelSize" id="sticker-size-select">
+          <option value="50x30" selected>50 × 30 mm (Standard Thermal)</option>
+          <option value="50x25">50 × 25 mm (Compact)</option>
+          <option value="40x30">40 × 30 mm (Small)</option>
+        </select>`
+      )}
+      ${field(
+        'Copies per item',
+        'copies',
+        '<input name="copies" id="sticker-copies-input" type="number" min="1" max="20" value="1" required />',
+        false,
+        'Number of sticker copies per unit.'
+      )}
+      <div class="form-actions">
+        <button type="button" class="btn secondary" data-action="cancel">Close</button>
+        <button type="submit" class="btn primary">${icon('printer')}Print ${isBatch ? `${units.length} Stickers` : 'Sticker'}</button>
+      </div>
+    </form>
+  `;
+
+  openDialog(title, 'STICKER & LABEL PRINTER', content);
+
+  const sizeSelect = $('#sticker-size-select', dialog);
+  if (sizeSelect) {
+    sizeSelect.onchange = async () => {
+      currentSize = sizeSelect.value;
+      const updated = await renderPreview(currentSize);
+      const listEl = $('#preview-stickers-list', dialog);
+      if (listEl) listEl.innerHTML = updated;
+    };
+  }
+
+  const formEl = $('#sticker-print-form', dialog);
+  if (formEl) {
+    formEl.onsubmit = async e => {
+      e.preventDefault();
+      const copies = Math.max(1, Math.min(20, Number($('#sticker-copies-input', dialog).value) || 1));
+      const printArea = $('#print-area');
+      if (!printArea) return;
+
+      const singleCards = await Promise.all(units.map(u => generateStickerHtml(u, currentSize)));
+      const allCards = [];
+      for (let i = 0; i < copies; i++) {
+        allCards.push(...singleCards);
+      }
+      printArea.innerHTML = allCards.join('');
+
+      window.print();
+      toast(`Sent ${allCards.length} label${allCards.length === 1 ? '' : 's'} to printer.`);
+    };
+  }
+}
+
 function addProduct() {
   if (!access().catalogue) return;
   openDialog(
@@ -723,7 +846,7 @@ function addProduct() {
     </form>`
   );
   const requestId = crypto.randomUUID();
-  $('form', dialog).onsubmit = e => {
+  $('form', dialog).onsubmit = async e => {
     e.preventDefault();
     const f = new FormData(e.target);
     const p = {
@@ -802,7 +925,7 @@ function receiveModal(id = '') {
     </form>`
   );
   const requestId = crypto.randomUUID();
-  $('form', dialog).onsubmit = e => {
+  $('form', dialog).onsubmit = async e => {
     e.preventDefault();
     const f = new FormData(e.target);
     const p = {
@@ -818,7 +941,13 @@ function receiveModal(id = '') {
     };
     const error = validateReceipt(p, db);
     if (error) return showError(error);
-    mutate('receive', p, `${p.quantity} stock unit${p.quantity === 1 ? '' : 's'} received.`);
+    const ok = await mutate('receive', p, `${p.quantity} stock unit${p.quantity === 1 ? '' : 's'} received.`);
+    if (ok) {
+      const newlyReceived = db.units.filter(u => u.productId === p.productId && u.reference === p.reference).slice(-p.quantity);
+      if (newlyReceived.length) {
+        openStickerPrinter(newlyReceived, `Print Stickers · ${newlyReceived.length} Units`);
+      }
+    }
   };
 }
 
@@ -835,7 +964,8 @@ function unitModal(id) {
     <p class="dialog-description">${esc(p?.sku || '')}</p>
     <div class="detail-code">
       <code>${esc(u.code)}</code>
-      <button class="icon-button" data-action="copy" data-code="${esc(u.code)}" aria-label="Copy inventory code">${icon('copy')}</button>
+      <button class="icon-button" data-action="copy" data-code="${esc(u.code)}" aria-label="Copy inventory code" title="Copy code">${icon('copy')}</button>
+      <button class="icon-button" data-action="print-unit-sticker" data-id="${esc(u.id)}" aria-label="Print sticker" title="Print sticker">${icon('printer')}</button>
     </div>
     <dl class="details">
       <div><dt>Status</dt><dd>${badge(u.status)}</dd></div>
@@ -845,10 +975,11 @@ function unitModal(id) {
       <div><dt>Unit value</dt><dd>${money(p?.unitValue)}</dd></div>
     </dl>
     ${formError}
-    ${
-      actions.length
-        ? `<div class="unit-actions">
-            ${actions
+    <div class="unit-actions">
+      ${button('Print sticker', 'print-unit-sticker', 'secondary', 'printer', `data-id="${esc(u.id)}"`)}
+      ${
+        actions.length
+          ? actions
               .map((a, i) =>
                 button(
                   a.label,
@@ -858,10 +989,10 @@ function unitModal(id) {
                   `data-id="${esc(u.id)}" data-status="${a.status}"`
                 )
               )
-              .join('')}
-          </div>`
-        : '<p class="notice">This item is currently undergoing repair. A manager or administrator can return it to stock when ready.</p>'
-    }`
+              .join('')
+          : '<p class="notice" style="margin:0;width:100%;">This item is currently undergoing repair. A manager or administrator can return it to stock when ready.</p>'
+      }
+    </div>`
   );
 }
 
@@ -1128,6 +1259,23 @@ async function onAction(event) {
   if (action === 'access') accessModal(id);
   if (action === 'camera') startCamera();
   if (action === 'export') exportActivity();
+  if (action === 'print-unit-sticker' && id) {
+    const u = db.units.find(x => x.id === id);
+    if (u) openStickerPrinter([u], `Print Sticker · ${u.code}`);
+  }
+  if (action === 'print-visible-stickers') {
+    const q = filters.stock.trim().toLowerCase();
+    const list = db.units.filter(
+      u =>
+        (!filters.status || u.status === filters.status) &&
+        `${u.code} ${u.serial} ${product(u.productId)?.name} ${product(u.productId)?.sku}`.toLowerCase().includes(q)
+    );
+    if (list.length) {
+      openStickerPrinter(list.slice(0, 100), `Print Stickers (${Math.min(list.length, 100)})`);
+    } else {
+      toast('No stock units to print.');
+    }
+  }
   if (action === 'product-stock') {
     filters.stock = product(id)?.sku || '';
     pageNumbers.stock = 1;
