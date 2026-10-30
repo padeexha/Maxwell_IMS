@@ -10,6 +10,7 @@ test('database authorization, validation, atomic receiving and audit integrity',
  create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
  grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;`);
  await db.exec(await readFile(new URL('../supabase/migrations/202610290001_inventory.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../supabase/migrations/202610300001_product_edit_delete.sql',import.meta.url),'utf8'));
  const ids=['00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000004'];
  for(let i=0;i<4;i++){
   await db.query('insert into auth.users values ($1)',[ids[i]]);
