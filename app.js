@@ -72,6 +72,7 @@ let cameraStream = null;
 let cameraTimer = null;
 let cameraGeneration = 0;
 let modalTrigger = null;
+const selectedStockIds = new Set();
 
 const dialog = $('#dialog');
 const product = id => db.products.find(p => p.id === id);
@@ -426,12 +427,40 @@ function renderStockTable() {
   const result = paginate(list, pageNumbers.stock);
   pageNumbers.stock = result.page;
 
+  // Prune any dangling IDs from selectedStockIds that no longer exist in db.units
+  for (const id of selectedStockIds) {
+    if (!db.units.some(u => u.id === id)) {
+      selectedStockIds.delete(id);
+    }
+  }
+
   const countText = `${list.length} unit${list.length === 1 ? '' : 's'}`;
+  const pageUnits = result.items;
+  const allPageSelected = pageUnits.length > 0 && pageUnits.every(u => selectedStockIds.has(u.id));
+  const selectedCount = selectedStockIds.size;
+
+  const selectionBarHtml = selectedCount > 0
+    ? `<div class="selection-bar">
+        <div class="selection-info">
+          <span class="selection-count">${selectedCount} item${selectedCount === 1 ? '' : 's'} selected</span>
+        </div>
+        <div class="selection-actions">
+          <button class="btn btn-secondary btn-sm" data-action="clear-stock-selection">Clear</button>
+          <button class="btn btn-primary btn-sm" data-action="print-selected-stickers">
+            ${icon('printer')} Print stickers (${selectedCount})
+          </button>
+        </div>
+      </div>`
+    : '';
+
   const html = list.length
-    ? `<div class="table-scroll">
+    ? `${selectionBarHtml}<div class="table-scroll">
         <table>
           <thead>
             <tr>
+              <th class="select-cell">
+                <input type="checkbox" id="select-all-stock" aria-label="Select all stock units on this page" ${allPageSelected ? 'checked' : ''} />
+              </th>
               <th>Product</th>
               <th>Inventory code</th>
               <th>Serial number</th>
@@ -443,7 +472,10 @@ function renderStockTable() {
           <tbody>
             ${result.items
               .map(
-                u => `<tr>
+                u => `<tr class="${selectedStockIds.has(u.id) ? 'selected-row' : ''}">
+                  <td class="select-cell">
+                    <input type="checkbox" class="stock-select-box" data-id="${esc(u.id)}" aria-label="Select unit ${esc(u.code)}" ${selectedStockIds.has(u.id) ? 'checked' : ''} />
+                  </td>
                   <td data-label="Product">
                     <strong>${esc(product(u.productId)?.name || 'Unknown product')}</strong>
                     <span class="subline">${esc(product(u.productId)?.sku)}</span>
@@ -480,14 +512,40 @@ function renderStockTable() {
   return { html, countText };
 }
 
+function updateStockView() {
+  const container = $('#stock-table-container');
+  const countLabel = $('.count-label', $('#page-content'));
+  if (container) {
+    const { html, countText } = renderStockTable();
+    container.innerHTML = html;
+    if (countLabel) countLabel.textContent = countText;
+  }
+  const headerMeta = $('.header-meta', $('#page-content'));
+  if (headerMeta && location.hash === '#stock') {
+    const selectedCount = selectedStockIds.size;
+    const printBtn = selectedCount > 0
+      ? button(`Print stickers (${selectedCount})`, 'print-selected-stickers', 'primary', 'printer')
+      : button('Print stickers', 'print-visible-stickers', 'secondary', 'printer');
+    const firstBtn = headerMeta.querySelector('[data-action^="print-"]');
+    if (firstBtn) {
+      firstBtn.outerHTML = printBtn;
+    }
+  }
+}
+
 function renderStock() {
   const { html, countText } = renderStockTable();
+  const selectedCount = selectedStockIds.size;
+  const printButton = selectedCount > 0
+    ? button(`Print stickers (${selectedCount})`, 'print-selected-stickers', 'primary', 'printer')
+    : button('Print stickers', 'print-visible-stickers', 'secondary', 'printer');
+
   return (
     header(
       'Stock units',
       'Every physical item, from receiving to its next movement.',
       `<div class="header-meta">
-        ${button('Print stickers', 'print-visible-stickers', 'secondary', 'printer')}
+        ${printButton}
         ${access().receive ? button('Receive stock', 'receive') : ''}
       </div>`
     ) +
@@ -1508,6 +1566,7 @@ function lock(message = '', isError = false) {
   closeDrawer();
   user = null;
   db = emptyDatabase();
+  selectedStockIds.clear();
   lastRefresh = null;
   filters = { products: '', stock: '', status: '', activity: '' };
   pageNumbers = { products: 1, stock: 1, activity: 1 };
@@ -1557,6 +1616,18 @@ async function onAction(event) {
   if (action === 'print-unit-sticker' && id) {
     const u = db.units.find(x => x.id === id);
     if (u) openStickerPrinter([u], `Print Sticker · ${u.code}`);
+  }
+  if (action === 'clear-stock-selection') {
+    selectedStockIds.clear();
+    updateStockView();
+  }
+  if (action === 'print-selected-stickers') {
+    const selected = db.units.filter(u => selectedStockIds.has(u.id));
+    if (selected.length) {
+      openStickerPrinter(selected, `Print Stickers (${selected.length})`);
+    } else {
+      toast('No units selected.');
+    }
   }
   if (action === 'print-visible-stickers') {
     const q = filters.stock.trim().toLowerCase();
@@ -1667,13 +1738,7 @@ function bind() {
         if (countLabel) countLabel.textContent = countText;
       }
     } else if (key === 'stock') {
-      const container = $('#stock-table-container');
-      const countLabel = $('.count-label', $('#page-content'));
-      if (container) {
-        const { html, countText } = renderStockTable();
-        container.innerHTML = html;
-        if (countLabel) countLabel.textContent = countText;
-      }
+      updateStockView();
     } else if (key === 'activity') {
       const container = $('#activity-table-container');
       const countLabel = $('.count-label', $('#page-content'));
@@ -1686,16 +1751,40 @@ function bind() {
   });
 
   $('#page-content').addEventListener('change', e => {
+    if (e.target.id === 'select-all-stock') {
+      const q = filters.stock.trim().toLowerCase();
+      const list = db.units
+        .filter(
+          u =>
+            (!filters.status || u.status === filters.status) &&
+            `${u.code} ${u.serial} ${product(u.productId)?.name} ${product(u.productId)?.sku}`.toLowerCase().includes(q)
+        )
+        .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt) || a.code.localeCompare(b.code));
+      const result = paginate(list, pageNumbers.stock);
+      if (e.target.checked) {
+        result.items.forEach(u => selectedStockIds.add(u.id));
+      } else {
+        result.items.forEach(u => selectedStockIds.delete(u.id));
+      }
+      updateStockView();
+      return;
+    }
+
+    if (e.target.classList.contains('stock-select-box')) {
+      const id = e.target.dataset.id;
+      if (e.target.checked) {
+        selectedStockIds.add(id);
+      } else {
+        selectedStockIds.delete(id);
+      }
+      updateStockView();
+      return;
+    }
+
     if (e.target.id === 'stock-status') {
       filters.status = e.target.value;
       pageNumbers.stock = 1;
-      const container = $('#stock-table-container');
-      const countLabel = $('.count-label', $('#page-content'));
-      if (container) {
-        const { html, countText } = renderStockTable();
-        container.innerHTML = html;
-        if (countLabel) countLabel.textContent = countText;
-      }
+      updateStockView();
     }
   });
 

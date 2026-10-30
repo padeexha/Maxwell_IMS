@@ -5,3 +5,5 @@ dist/
 .vercel/
 .vercel
 *.zpl
+*.zip
+printer-server-release/

@@ -7,6 +7,13 @@ import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
 PORT = 5001
+DEFAULT_ALLOWED_ORIGINS = (
+    "http://127.0.0.1:5173,http://localhost:5173,"
+    "http://127.0.0.1:5174,http://localhost:5174,"
+    "http://127.0.0.1:4173,http://localhost:4173,"
+    "https://maxwell-ims.vercel.app"
+)
+MAX_REQUEST_BYTES = 1_000_000
 
 # ── Dimensions matching Barcode Gen.py ────────────────────────────────────────
 LABEL_W     = 400  # 50mm sticker = 400 dots
@@ -202,8 +209,23 @@ def build_zpl_from_labels(labels: list[dict]) -> str:
     return "\n".join(zpl_blocks)
 
 
+def validate_labels(labels):
+    if not isinstance(labels, list) or not labels or len(labels) > 100:
+        raise ValueError("Provide between 1 and 100 labels")
+    for label in labels:
+        if not isinstance(label, dict):
+            raise ValueError("Each label must be an object")
+        name = label.get("name", "")
+        code = label.get("barcode", "")
+        if not isinstance(name, str) or len(name) > 200:
+            raise ValueError("Label names must be text up to 200 characters")
+        if not isinstance(code, str) or not code.strip() or len(code) > 200:
+            raise ValueError("Label codes must be text between 1 and 200 characters")
+
+
 class PrintServerHandler(http.server.BaseHTTPRequestHandler):
     api_key = ""
+    allowed_origins = set(DEFAULT_ALLOWED_ORIGINS.split(","))
 
     def check_auth(self):
         if not self.api_key:
@@ -225,25 +247,62 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
             
         return False
 
+    def origin_allowed(self):
+        origin = self.headers.get("Origin")
+        return not origin or origin in self.allowed_origins
+
     def send_unauthorized(self):
         self.send_response(401)
-        self.send_header('Access-Control-Allow-Origin', '*')
+        origin = self.headers.get('Origin')
+        if origin and origin in self.allowed_origins:
+            self.send_header('Access-Control-Allow-Origin', origin)
+            self.send_header('Vary', 'Origin')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Api-Key')
         self.end_headers()
         self.wfile.write(b"Unauthorized: Invalid or missing API key.")
 
     def end_headers(self):
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Api-Key')
+        origin = self.headers.get('Origin')
+        if origin and origin in self.allowed_origins:
+            self.send_header('Access-Control-Allow-Origin', origin)
+            self.send_header('Vary', 'Origin')
+            # Required when the hosted app accesses the user's loopback printer agent.
+            self.send_header('Access-Control-Allow-Private-Network', 'true')
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Api-Key')
         super().end_headers()
 
     def do_OPTIONS(self):
-        self.send_response(200)
+        if not self.origin_allowed():
+            self.send_response(403)
+            self.end_headers()
+            return
+        self.send_response(204)
         self.end_headers()
 
+    def read_json_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            raise ValueError("Invalid content length")
+        if length < 1 or length > MAX_REQUEST_BYTES:
+            raise ValueError("Request body must be between 1 byte and 1 MB")
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            raise ValueError("Incomplete request body")
+        return raw.decode("utf-8")
+
+    def do_OPTIONS_ORIGIN_GUARD(self):
+        if not self.origin_allowed():
+            self.send_response(403)
+            self.end_headers()
+            return False
+        return True
+
     def do_GET(self):
+        if not self.do_OPTIONS_ORIGIN_GUARD():
+            return
         if not self.check_auth():
             self.send_unauthorized()
             return
@@ -267,43 +326,84 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        if not self.do_OPTIONS_ORIGIN_GUARD():
+            return
         if not self.check_auth():
             self.send_unauthorized()
             return
         if self.path == '/generate':
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length).decode('utf-8')
+            try:
+                post_data = self.read_json_body()
+            except (ValueError, UnicodeDecodeError) as e:
+                self.send_response(400); self.end_headers(); self.wfile.write(str(e).encode()); return
             try:
                 params = json.loads(post_data)
                 labels = params.get('labels', [])
+                validate_labels(labels)
                 zpl = build_zpl_from_labels(labels)
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(zpl.encode())
+            except ValueError as e:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
             except Exception as e:
                 self.send_response(500)
                 self.end_headers()
                 self.wfile.write(str(e).encode())
 
         elif self.path == '/print':
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length).decode('utf-8')
+            try:
+                post_data = self.read_json_body()
+            except (ValueError, UnicodeDecodeError) as e:
+                self.send_response(400); self.end_headers(); self.wfile.write(str(e).encode()); return
             
             zpl = ''
             labels = []
             printer = ''
+            params = {}
 
             try:
                 params = json.loads(post_data)
+            except json.JSONDecodeError:
+                # Preserve support for callers that send raw ZPL text.
+                zpl = post_data
+            else:
+                if not isinstance(params, dict):
+                    self.send_response(400); self.end_headers(); self.wfile.write(b"JSON body must be an object."); return
                 printer = params.get('printer', '')
                 if 'labels' in params:
                     labels = params['labels']
+                    try:
+                        validate_labels(labels)
+                    except ValueError as e:
+                        self.send_response(400); self.end_headers(); self.wfile.write(str(e).encode()); return
                     zpl = build_zpl_from_labels(labels)
+                elif isinstance(params.get('zpl'), str):
+                    zpl = params['zpl']
                 else:
-                    zpl = params.get('zpl', '')
-            except Exception:
-                zpl = post_data
+                    self.send_response(400); self.end_headers(); self.wfile.write(b"Provide labels or ZPL text."); return
+
+            if not zpl and not labels:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Empty ZPL or label data.")
+                return
+
+            # Virtual mode always writes a local ZPL file and never looks up or contacts a printer.
+            is_virtual = params.get('virtual', False) if isinstance(params, dict) else False
+            if is_virtual or os.environ.get("PRINT_SERVER_VIRTUAL_MODE") == "1":
+                output_dir = os.path.join(os.path.expanduser("~"), "Documents", "Maxwell Printer Test")
+                os.makedirs(output_dir, exist_ok=True)
+                out_path = os.path.join(output_dir, "last_label_print.zpl")
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(zpl)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(f"Virtual test successful: generated {len(zpl)} bytes of ZPL at {out_path}".encode())
+                return
 
             # Try loading saved printer configuration
             if not printer:
@@ -340,16 +440,6 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             if not printer:
-                is_virtual = params.get('virtual', False) if isinstance(params, dict) else False
-                if is_virtual or os.environ.get("PRINT_SERVER_VIRTUAL_MODE") == "1":
-                    out_path = os.path.join(os.path.dirname(__file__), "..", "last_label_print.zpl")
-                    with open(out_path, "w", encoding="utf-8") as f:
-                        f.write(zpl)
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(f"Virtual test successful: generated {len(zpl)} bytes of ZPL saved to last_label_print.zpl".encode())
-                    return
-
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(b"No CUPS printer found. Please add a thermal printer in macOS System Settings > Printers & Scanners, or use Browser Print / PDF.")
@@ -401,19 +491,30 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description="Print Server Bridge")
-    parser.add_argument("--host", default=os.environ.get("PRINT_SERVER_HOST", "0.0.0.0"), help="Host to bind server to")
+    parser.add_argument("--host", default=os.environ.get("PRINT_SERVER_HOST", "127.0.0.1"), help="Host to bind server to (loopback only by default)")
+    parser.add_argument("--allowed-origin", action="append", default=None, help="Browser origin allowed to access the local print bridge; repeat to add another")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PRINT_SERVER_PORT", PORT)), help="Port to bind server to")
     parser.add_argument("--api-key", default=os.environ.get("PRINT_SERVER_API_KEY", ""), help="API key required for printing")
     args = parser.parse_args()
 
     PrintServerHandler.api_key = args.api_key
+    configured_origins = args.allowed_origin or os.environ.get("PRINT_SERVER_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS.split(","))
+    if isinstance(configured_origins, str):
+        configured_origins = configured_origins.split(",")
+    PrintServerHandler.allowed_origins = {origin.strip().rstrip("/") for origin in configured_origins if origin.strip()}
 
     print(f"Starting print server bridge on {args.host}:{args.port}...")
+    print("Allowed browser origins: " + ", ".join(sorted(PrintServerHandler.allowed_origins)))
     if args.api_key:
         print("API Key Authentication is ENABLED.")
     else:
         print("WARNING: API Key Authentication is DISABLED. Anyone can print!")
     print("Press Ctrl+C to stop.")
     
-    server = http.server.HTTPServer((args.host, args.port), PrintServerHandler)
-    server.serve_forever()
+    server = http.server.ThreadingHTTPServer((args.host, args.port), PrintServerHandler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping print server bridge...")
+    finally:
+        server.server_close()
