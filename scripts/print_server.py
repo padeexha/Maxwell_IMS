@@ -333,19 +333,47 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-            if not printer:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(b"No CUPS printer found.")
-                return
-
             if not zpl and not labels:
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(b"Empty ZPL or label data.")
                 return
 
-            # Enable queue and send print job
+            if not printer:
+                is_virtual = params.get('virtual', False) if isinstance(params, dict) else False
+                if is_virtual or os.environ.get("PRINT_SERVER_VIRTUAL_MODE") == "1":
+                    out_path = os.path.join(os.path.dirname(__file__), "..", "last_label_print.zpl")
+                    with open(out_path, "w", encoding="utf-8") as f:
+                        f.write(zpl)
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(f"Virtual test successful: generated {len(zpl)} bytes of ZPL saved to last_label_print.zpl".encode())
+                    return
+
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"No CUPS printer found. Please add a thermal printer in macOS System Settings > Printers & Scanners, or use Browser Print / PDF.")
+                return
+
+            # Support direct TCP socket printing (e.g. 192.168.1.50:9100)
+            if ':' in printer or (printer.replace('.', '').isdigit() and printer.count('.') == 3):
+                try:
+                    import socket
+                    host = printer.split(':')[0]
+                    port = int(printer.split(':')[1]) if ':' in printer else 9100
+                    with socket.create_connection((host, port), timeout=5) as s:
+                        s.sendall(zpl.encode("utf-8"))
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(f"Printed {len(zpl)} bytes to network thermal printer at {printer}".encode())
+                    return
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(f"Network printer connection error ({printer}): {e}".encode())
+                    return
+
+            # Enable queue and send print job via CUPS
             subprocess.run(["cupsenable", printer], capture_output=True)
             try:
                 proc = subprocess.run(

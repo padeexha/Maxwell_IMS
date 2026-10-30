@@ -760,9 +760,13 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
   const isBatch = units.length > 1;
 
   let printServerOnline = false;
+  let availablePrinters = [];
   try {
-    const res = await fetch('http://127.0.0.1:5001/printers', { signal: AbortSignal.timeout(500) });
-    if (res.ok) printServerOnline = true;
+    const res = await fetch('http://127.0.0.1:5001/printers', { signal: AbortSignal.timeout(800) });
+    if (res.ok) {
+      printServerOnline = true;
+      availablePrinters = await res.json();
+    }
   } catch {}
 
   const renderPreview = async size => {
@@ -775,8 +779,14 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
   const content = `
     <div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
       <span class="eyebrow">Label Output</span>
-      <span class="badge ${printServerOnline ? 'available' : ''}" style="font-size:11px;">
-        ${printServerOnline ? '● Local Print Server Online (Port 5001)' : '○ Print Server Offline'}
+      <span class="badge ${printServerOnline ? (availablePrinters.length ? 'available' : 'repair') : ''}" style="font-size:11px;">
+        ${
+          printServerOnline
+            ? (availablePrinters.length
+                ? `● Print Server Online (${availablePrinters.join(', ')})`
+                : '● Print Server Online (No CUPS printer in macOS)')
+            : '○ Print Server Offline'
+        }
       </span>
     </div>
     <p class="dialog-description">
@@ -811,7 +821,7 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
         ${
           printServerOnline
             ? `<button type="button" class="btn secondary" id="send-direct-thermal-btn">
-                ${icon('printer')}Direct Thermal (Port 5001)
+                ${icon('printer')}${availablePrinters.length ? 'Direct Thermal (Port 5001)' : 'Direct Thermal Test (Virtual)'}
               </button>`
             : ''
         }
@@ -843,17 +853,21 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
           name: product(u.productId)?.name || 'Stock item',
           barcode: u.code
         }));
+        const payload = {
+          labels,
+          virtual: availablePrinters.length === 0
+        };
         const res = await fetch('http://127.0.0.1:5001/print', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ labels })
+          body: JSON.stringify(payload)
         });
         const text = await res.text();
         if (res.ok) {
-          toast(text || 'ZPL print job sent to thermal printer.');
+          toast(text || 'ZPL print job processed.');
           closeDialog();
         } else {
-          showError(`Print server response: ${text}`);
+          showError(text);
         }
       } catch (err) {
         showError(`Could not reach print server: ${err.message}`);
