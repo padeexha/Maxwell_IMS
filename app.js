@@ -836,13 +836,6 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
 
   let printServerOnline = false;
   let availablePrinters = [];
-  try {
-    const res = await fetch('http://127.0.0.1:5001/printers', { signal: AbortSignal.timeout(800) });
-    if (res.ok) {
-      printServerOnline = true;
-      availablePrinters = await res.json();
-    }
-  } catch {}
 
   const renderPreview = async size => {
     const cards = await Promise.all(units.map(u => generateStickerHtml(u, size)));
@@ -854,14 +847,8 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
   const content = `
     <div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
       <span class="eyebrow">Label Output</span>
-      <span class="badge ${printServerOnline ? (availablePrinters.length ? 'available' : 'repair') : ''}" style="font-size:11px;">
-        ${
-          printServerOnline
-            ? (availablePrinters.length
-                ? `● Print Server Online (${availablePrinters.join(', ')})`
-                : '● Print Server Online (No CUPS printer in macOS)')
-            : '○ Print Server Offline'
-        }
+      <span class="badge" id="print-server-status" style="font-size:11px;">
+        ○ Printer server not connected
       </span>
     </div>
     <p class="dialog-description">
@@ -893,13 +880,12 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
       )}
       <div class="form-actions" style="flex-wrap:wrap;">
         <button type="button" class="btn secondary" data-action="cancel">Close</button>
-        ${
-          printServerOnline
-            ? `<button type="button" class="btn secondary" id="send-direct-thermal-btn">
-                ${icon('printer')}${availablePrinters.length ? 'Direct Thermal (Port 5001)' : 'Direct Thermal Test (Virtual)'}
-              </button>`
-            : ''
-        }
+        <button type="button" class="btn secondary" id="connect-print-server-btn">
+          Connect to Printer Server
+        </button>
+        <button type="button" class="btn secondary" id="send-direct-thermal-btn" style="display:none;">
+          ${icon('printer')}Direct Thermal (Port 5001)
+        </button>
         <button type="submit" class="btn primary">${icon('printer')}Browser Print / PDF</button>
       </div>
     </form>
@@ -917,7 +903,53 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
     };
   }
 
+  const statusBadge = $('#print-server-status', dialog);
+  const connectBtn = $('#connect-print-server-btn', dialog);
   const directBtn = $('#send-direct-thermal-btn', dialog);
+
+  if (connectBtn) {
+    connectBtn.onclick = async () => {
+      connectBtn.disabled = true;
+      connectBtn.textContent = 'Connecting…';
+      if (statusBadge) statusBadge.textContent = 'Requesting browser access to this PC…';
+      try {
+        const request = new Request('http://127.0.0.1:5001/printers', {
+          method: 'GET',
+          mode: 'cors',
+          targetAddressSpace: 'loopback',
+          signal: AbortSignal.timeout(15000)
+        });
+        const res = await fetch(request);
+        if (!res.ok) throw new Error(`Printer server returned HTTP ${res.status}`);
+        const printers = await res.json();
+        if (!Array.isArray(printers)) throw new Error('Printer server returned an invalid printer list');
+        printServerOnline = true;
+        availablePrinters = printers;
+        if (statusBadge) {
+          statusBadge.className = `badge ${printers.length ? 'available' : 'repair'}`;
+          statusBadge.textContent = printers.length
+            ? `● Print Server Online (${printers.join(', ')})`
+            : '● Print Server Online (no printer detected)';
+        }
+        if (directBtn) {
+          directBtn.style.display = '';
+          directBtn.innerHTML = `${icon('printer')}${printers.length ? 'Direct Thermal (Port 5001)' : 'Direct Thermal Test (Virtual)'}`;
+        }
+        connectBtn.textContent = 'Reconnect';
+      } catch (err) {
+        printServerOnline = false;
+        if (statusBadge) {
+          statusBadge.className = 'badge repair';
+          statusBadge.textContent = 'Connection failed. Check that the server is running and allow Local network access for this site.';
+        }
+        connectBtn.textContent = 'Retry Connection';
+        showError(`Could not reach the printer server. Start it, allow Local network access for maxwell-ims.vercel.app in browser site settings, then retry. (${err.message})`);
+      } finally {
+        connectBtn.disabled = false;
+      }
+    };
+  }
+
   if (directBtn) {
     directBtn.onclick = async () => {
       directBtn.disabled = true;
@@ -932,11 +964,14 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
           labels,
           virtual: availablePrinters.length === 0
         };
-        const res = await fetch('http://127.0.0.1:5001/print', {
+        const request = new Request('http://127.0.0.1:5001/print', {
           method: 'POST',
+          mode: 'cors',
+          targetAddressSpace: 'loopback',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        const res = await fetch(request);
         const text = await res.text();
         if (res.ok) {
           toast(text || 'ZPL print job processed.');
