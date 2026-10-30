@@ -739,18 +739,8 @@ async function generateStickerHtml(unit, size = '50x30') {
 
   return `<div class="sticker-card size-${size}" data-code="${esc(unit.code)}">
     <div class="sticker-qr">${qrSvg}</div>
-    <div class="sticker-details">
-      <div class="sticker-brand-row">
-        <span class="sticker-brand">MAXWELL</span>
-        <span class="sticker-tag">STOCK</span>
-      </div>
-      <div class="sticker-code">${esc(unit.code)}</div>
-      <div class="sticker-name" title="${esc(p?.name || '')}">${esc(p?.name || 'Stock Item')}</div>
-      <div class="sticker-meta">
-        <span>SKU: ${esc(p?.sku || '—')}</span>
-        ${unit.serial ? `<span>SN: ${esc(unit.serial)}</span>` : ''}
-      </div>
-    </div>
+    <div class="sticker-name" title="${esc(p?.name || '')}">${esc(p?.name || 'Stock Item')}</div>
+    <div class="sticker-code">${esc(unit.code)}</div>
   </div>`;
 }
 
