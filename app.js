@@ -346,7 +346,12 @@ function renderProductsTable() {
                   <td class="numeric" data-label="Unit value">${money(p.unitValue)}</td>
                   <td class="actions-cell">
                     <div class="table-actions">
-                      ${access().catalogue ? `<button class="text-button" data-action="value" data-id="${esc(p.id)}">Edit value</button>` : ''}
+                      ${
+                        access().catalogue
+                          ? `<button class="text-button" data-action="edit-product" data-id="${esc(p.id)}">Edit</button>
+                             <button class="text-button danger" data-action="delete-product" data-id="${esc(p.id)}">Delete</button>`
+                          : ''
+                      }
                       ${
                         access().receive
                           ? `<button class="text-button" data-action="receive" data-id="${esc(p.id)}">Receive ${icon('plus')}</button>`
@@ -657,8 +662,8 @@ function showError(message, root = dialog) {
 }
 
 const formError = '<p class="form-error" role="alert" tabindex="-1" hidden></p>';
-const formActions = label =>
-  `<div class="form-actions"><button type="button" class="btn secondary" data-action="cancel">Cancel</button><button class="btn primary" type="submit">${label}</button></div>`;
+const formActions = (label, kind = 'primary') =>
+  `<div class="form-actions"><button type="button" class="btn secondary" data-action="cancel">Cancel</button><button class="btn ${kind}" type="submit">${label}</button></div>`;
 
 function field(label, name, input, full = false, hint = '') {
   return `<div class="field ${full ? 'full' : ''}">
@@ -936,6 +941,81 @@ function valueModal(id) {
     const error = validateValue(value);
     if (error) return showError(error);
     mutate('set_value', { id, value }, 'Product value updated.');
+  };
+}
+
+function editProduct(id) {
+  if (!access().catalogue) return;
+  const p = product(id);
+  if (!p) return;
+  const categories = ['Appliances', 'Electronics', 'Furniture', 'Other'];
+  openDialog(
+    'Edit product',
+    'Product Catalogue',
+    `<p class="dialog-description">Update product name, SKU, category, or valuation.</p>
+    <form class="form-grid">${formError}
+      ${field('Product name *', 'name', `<input name="name" maxlength="200" required value="${esc(p.name)}" placeholder="e.g. Samsung 55-inch TV" />`, true)}
+      ${field('SKU *', 'sku', `<input name="sku" maxlength="100" required value="${esc(p.sku)}" placeholder="e.g. SAM-TV-55" />`)}
+      ${field('Category', 'category', `<select name="category">${categories.map(c => `<option ${p.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select>`)}
+      ${field('Brand', 'brand', `<input name="brand" maxlength="120" value="${esc(p.brand || '')}" placeholder="Optional" />`)}
+      ${field('Model', 'model', `<input name="model" maxlength="120" value="${esc(p.model || '')}" placeholder="Optional" />`)}
+      ${field('Unit value (LKR) *', 'unitValue', `<input name="unitValue" type="number" min="0" max="999999999999.99" step="0.01" required value="${Number(p.unitValue)}" />`)}
+      ${field('Reorder level *', 'reorderLevel', `<input name="reorderLevel" type="number" min="0" max="2147483647" step="1" required value="${Number(p.reorderLevel)}" />`, false, 'Trigger an alert when available stock drops to this level.')}
+      ${formActions('Save changes')}
+    </form>`
+  );
+  $('form', dialog).onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const updated = {
+      id,
+      name: f.get('name').trim(),
+      sku: f.get('sku').trim().toUpperCase(),
+      category: f.get('category'),
+      brand: f.get('brand').trim(),
+      model: f.get('model').trim(),
+      unitValue: Number(f.get('unitValue')),
+      reorderLevel: Number(f.get('reorderLevel'))
+    };
+    const error = validateProduct(updated, db.products, id);
+    if (error) return showError(error);
+    mutate('update_product', updated, 'Product updated successfully.');
+  };
+}
+
+function deleteProduct(id) {
+  if (!access().catalogue) return;
+  const p = product(id);
+  if (!p) return;
+  const unitCount = db.units.filter(u => u.productId === id).length;
+  if (unitCount > 0) {
+    openDialog(
+      'Cannot delete product',
+      'Catalogue Protection',
+      `<p class="dialog-description">
+        <strong>${esc(p.name)}</strong> (${esc(p.sku)}) cannot be deleted because it has <strong>${unitCount}</strong> associated stock unit${unitCount === 1 ? '' : 's'}.
+      </p>
+      <p class="notice" style="margin:0;">Products with stock history or active inventory units cannot be deleted to maintain audit integrity. You can edit the product name or mark stock units as sold.</p>
+      <div class="form-actions" style="margin-top:20px;">
+        <button type="button" class="btn secondary" data-action="cancel">Close</button>
+      </div>`
+    );
+    return;
+  }
+
+  openDialog(
+    'Delete product',
+    'Confirm Deletion',
+    `<p class="dialog-description">Are you sure you want to delete <strong>${esc(p.name)}</strong> (${esc(p.sku)}) from the catalogue?</p>
+    <p class="dialog-description" style="color:var(--muted);">This action cannot be undone. All catalogue details for this item will be permanently removed.</p>
+    <form class="form-grid">
+      ${formError}
+      ${formActions('Delete product', 'danger')}
+    </form>`
+  );
+  $('form', dialog).onsubmit = async e => {
+    e.preventDefault();
+    mutate('delete_product', { id: p.id, name: `${p.name} (${p.sku})` }, 'Product deleted from catalogue.');
   };
 }
 
@@ -1304,6 +1384,8 @@ async function onAction(event) {
   if (!user) return;
 
   if (action === 'add-product') addProduct();
+  if (action === 'edit-product') editProduct(id);
+  if (action === 'delete-product') deleteProduct(id);
   if (action === 'receive') receiveModal(id);
   if (action === 'value') valueModal(id);
   if (action === 'unit') unitModal(id);

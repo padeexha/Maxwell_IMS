@@ -291,6 +291,14 @@ svg {
   text-decoration: underline;
 }
 
+.text-button.danger {
+  color: var(--red);
+}
+
+.text-button.danger:hover:not(:disabled) {
+  color: #b91c1c;
+}
+
 .full-width {
   width: 100%;
 }

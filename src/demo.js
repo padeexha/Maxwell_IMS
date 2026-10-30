@@ -27,6 +27,19 @@ export function demoCommand(db, action, p, actor, storage) {
     if(!access.catalogue)throw Error('Administrator access required.');
     const error=validateProduct(p,next.products);if(error)throw Error(error);
     next.products.push({...p,id:crypto.randomUUID()});audit('product',`Created product ${p.sku}`);
+  } else if(action==='update_product'){
+    if(!access.catalogue)throw Error('Administrator access required.');
+    const error=validateProduct(p,next.products,p.id);if(error)throw Error(error);
+    const product=next.products.find(x=>x.id===p.id);if(!product)throw Error('Product not found.');
+    product.name=p.name;product.brand=p.brand;product.sku=p.sku;product.category=p.category;product.model=p.model;product.reorderLevel=p.reorderLevel;product.unitValue=p.unitValue;
+    audit('product',`Updated product ${product.sku} (${product.name})`);
+  } else if(action==='delete_product'){
+    if(!access.catalogue)throw Error('Administrator access required.');
+    const idx=next.products.findIndex(x=>x.id===p.id);if(idx===-1)throw Error('Product not found.');
+    const hasUnits=next.units.some(u=>u.productId===p.id);
+    if(hasUnits)throw Error('Cannot delete product because it has existing stock units.');
+    const deleted=next.products.splice(idx,1)[0];
+    audit('product',`Deleted product ${deleted.sku}`);
   } else if(action==='set_value'){
     if(!access.catalogue)throw Error('Administrator access required.');
     const error=validateValue(p.value);if(error)throw Error(error);

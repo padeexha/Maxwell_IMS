@@ -49,7 +49,7 @@ begin
  -- Lock the caller profile so access revocation cannot race a stock mutation.
  select * into staff from public.profiles where id=auth.uid() and active for share;
  if staff.id is null then raise exception 'Active staff access required' using errcode='42501'; end if;
- if action in ('create_product','set_value','set_access') and staff.role<>'Administrator' then
+ if action in ('create_product','update_product','delete_product','set_value','set_access') and staff.role<>'Administrator' then
   raise exception 'Administrator access required' using errcode='42501';
  end if;
  if action='receive' and staff.role not in ('Administrator','Manager') then
@@ -59,6 +59,25 @@ begin
   insert into public.products(name,brand,sku,category,model,"reorderLevel","unitValue") values
   (payload->>'name',coalesce(payload->>'brand',''),upper(trim(payload->>'sku')),payload->>'category',coalesce(payload->>'model',''),(payload->>'reorderLevel')::integer,(payload->>'unitValue')::numeric);
   event_type='product'; event_text='Created product '||(payload->>'sku');
+ elsif action='update_product' then
+  update public.products set
+   name=trim(payload->>'name'),
+   brand=coalesce(payload->>'brand',''),
+   sku=upper(trim(payload->>'sku')),
+   category=payload->>'category',
+   model=coalesce(payload->>'model',''),
+   "reorderLevel"=(payload->>'reorderLevel')::integer,
+   "unitValue"=(payload->>'unitValue')::numeric
+  where id=(payload->>'id')::uuid;
+  if not found then raise exception 'Product not found'; end if;
+  event_type='product'; event_text='Updated product '||coalesce(payload->>'sku', payload->>'id');
+ elsif action='delete_product' then
+  if exists (select 1 from public.units where "productId"=(payload->>'id')::uuid) then
+   raise exception 'Cannot delete product with existing stock units' using errcode='23503';
+  end if;
+  delete from public.products where id=(payload->>'id')::uuid returning sku into desired;
+  if not found then raise exception 'Product not found'; end if;
+  event_type='product'; event_text='Deleted product '||coalesce(desired, payload->>'id');
  elsif action='set_value' then
   update public.products set "unitValue"=(payload->>'value')::numeric where id=(payload->>'id')::uuid;
   if not found then raise exception 'Product not found'; end if;

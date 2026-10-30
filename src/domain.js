@@ -12,10 +12,10 @@ export function transitions(status, role) {
   if (status === 'Repair' && permissions(role).receive) return [{status:'Available', label:'Complete repair', type:'repair'}];
   return [];
 }
-export function validateProduct(p, products = []) {
+export function validateProduct(p, products = [], currentId = null) {
   if (!p.name?.trim() || p.name.trim().length > 200) return 'Enter a product name (up to 200 characters).';
   if (!p.sku?.trim() || p.sku.trim().length > 100) return 'Enter an SKU (up to 100 characters).';
-  if (products.some(x => x.sku.toUpperCase() === p.sku.trim().toUpperCase())) return 'This SKU already exists. Use a unique SKU.';
+  if (products.some(x => x.id !== currentId && x.sku.toUpperCase() === p.sku.trim().toUpperCase())) return 'This SKU already exists. Use a unique SKU.';
   if (!Number.isInteger(p.reorderLevel) || p.reorderLevel < 0) return 'Reorder level must be a whole number of zero or more.';
   return validateValue(p.unitValue);
 }
