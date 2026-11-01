@@ -40,3 +40,14 @@ export async function snapshot() {
   activities.sort((a,b)=>b.at.localeCompare(a.at));
   return {db:{products,units,activities,users},profile:latest};
 }
+
+
+async function rpc(name, params = {}) {
+  const { data, error } = await client.rpc(name, params);
+  if (error) throw error;
+  return data;
+}
+export const listPrintAgents = () => rpc('list_print_agents');
+export const createPrintAgent = name => rpc('create_print_agent', { p_name: name });
+export const setPrintAgentActive = (id, active) => rpc('set_print_agent_active', { p_agent_id: id, p_active: active });
+export const enqueuePrintJob = (agentId, labels) => rpc('enqueue_print_job', { p_agent_id: agentId, p_labels: labels });

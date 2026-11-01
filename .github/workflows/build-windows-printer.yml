@@ -25,7 +25,7 @@ jobs:
       - name: Build executable
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile --console
-          --name MaxwellPrinterServer --collect-all qrcode --hidden-import win32timezone
+          --name MaxwellPrinterServer --collect-all qrcode --hidden-import win32timezone --hidden-import win32crypt --hidden-import pywintypes
           scripts/print_server.py
       - name: Assemble package
         shell: pwsh

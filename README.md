@@ -28,7 +28,7 @@ Hosted inventory lives only in PostgreSQL; it is held in memory while displayed.
 
 ## Supabase setup
 
-1. Create a dedicated Supabase project. Run `supabase/migrations/202610290001_inventory.sql` in its SQL editor as the project owner, once. Alternatively apply the migration through your normal Supabase CLI migration workflow. It creates tables, constraints, indexes, RLS policies and the `inventory_command` function in one transaction.
+1. Create a dedicated Supabase project. Apply all files in `supabase/migrations/` in timestamp order using `supabase db push` or your normal migration workflow. The migrations create tables, constraints, indexes, RLS policies, and the inventory and remote print RPCs.
 2. In Authentication settings, disable public signups and anonymous sign-ins. Set the Site URL to your production Vercel/custom domain. Use a separate Supabase project for preview/testing environments.
 3. In Authentication → Users, create the first confirmed email/password user. Record its UUID. Then provision its profile in the SQL editor:
 
@@ -57,9 +57,10 @@ Authorization is enforced inside PostgreSQL, not by hiding frontend buttons. Aut
 | Complete repair | Yes | Yes | No |
 | Read/export activity history | Yes | Yes | No |
 | View team / change another user's access | Yes | No | No |
-| Hosted printing | Not implemented | Not implemented | No |
+| Queue label jobs to a paired printer server | Yes | Yes | Yes |
+| Pair, disable, or monitor printer servers | Yes | No | No |
 
-This is one organization with a shared inventory. Workers can read product valuations; hiding confidential costs would require a separate permissioned table/view. Dashboard summaries are available to all staff; historical activity/export is restricted.
+This is one organization with a shared inventory. Workers can read product valuations; hiding confidential costs would require a separate permissioned table/view. Dashboard summaries are available to all staff; historical activity/export is restricted. Any active staff member can queue labels for an approved printer server; only administrators can pair or disable a server.
 
 Every mutation records an actor and timestamp on the server. Stock changes lock the unit row and require its expected version. A second sale or stale operation fails; refresh before trying again. Receiving writes units and their audit records atomically. SKU uniqueness, case-insensitive non-empty serial uniqueness, valid quantities, and nonnegative values are database-enforced. Returns go directly to `Available`; repairs use `Repair` until a manager/admin completes them. The older `Returned`/`Damaged` demo labels are not new hosted states.
 
@@ -68,7 +69,7 @@ Every mutation records an actor and timestamp on the server. Stock changes lock 
 1. Push this project, including `package-lock.json` and the migration, to your Git repository.
 2. Import it into Vercel. Select Vite and Node.js 24.x. The checked-in `vercel.json` uses `npm run build` and serves `dist`.
 3. Add the three environment variables to the Production environment with `VITE_DATA_MODE=supabase`. Configure Preview separately against a staging Supabase project (or explicitly choose demo for Preview).
-4. Apply the migration and provision staff **before** deploying the UI. Deploy; set the final HTTPS URL in Supabase Authentication settings. Redeploy when changing environment variables.
+4. Apply all pending migrations and provision staff **before** deploying the UI. Deploy; set the final HTTPS URL in Supabase Authentication settings. Redeploy when changing environment variables.
 5. Smoke-test using separate administrator, manager and worker accounts: sign-in/out; catalogue restrictions; receiving; code/serial lookup; sell/return/repair; refresh from another browser; CSV export restrictions; and disabled-user denial. Confirm a worker's direct RPC requests to receive or change access fail, not just that buttons are hidden.
 
 Vercel serves static assets; Supabase serves the authenticated API/database. No Vercel API route or service-role credential is needed for this architecture. Security headers are configured in `vercel.json`.
@@ -80,16 +81,20 @@ npm test
 npm run build
 ```
 
-Database tests run the actual migration in embedded PostgreSQL (PGlite), with Auth roles and `auth.uid()` simulated. They exercise RLS, direct-write denials, role escalation denial, immutable audit records, inactive/unprovisioned users, duplicate SKU/serial constraints, batch rollback, valid transitions and stale-version rejection. They do not replace a real Supabase Auth/PostgREST integration test or a concurrent multi-connection load test. Both demo and Supabase production bundles were built locally; the demo receipt dialog was checked in a browser. Production is deployed at https://maxwell-ims.vercel.app with GitHub continuous deployment from `main`. The migration is applied to Supabase project `iljvzokqxnicrzyaikkk`; RLS and anonymous/direct-write denials were checked on the hosted database. Public and anonymous signup are disabled. An administrator account is provisioned. The live login page was verified; authenticated end-to-end workflows still require user sign-in and staging validation. Preview deployments use demo mode.
+Database tests run the actual migration in embedded PostgreSQL (PGlite), with Auth roles and `auth.uid()` simulated. They exercise RLS, direct-write denials, role escalation denial, immutable audit records, inactive/unprovisioned users, duplicate SKU/serial constraints, batch rollback, valid transitions and stale-version rejection. They do not replace a real Supabase Auth/PostgREST integration test or a concurrent multi-connection load test. Both demo and Supabase production bundles were built locally; the demo receipt dialog was checked in a browser. Production is deployed at https://maxwell-ims.vercel.app with GitHub continuous deployment from `main`. The inventory and remote-printer migrations are applied to Supabase project `iljvzokqxnicrzyaikkk`; RLS and anonymous/direct-write denials were checked on the hosted database. Public and anonymous signup are disabled. An administrator account is provisioned. The live login page was verified; authenticated end-to-end workflows still require user sign-in and staging validation. Preview deployments use demo mode.
 
-## Printing
+## Remote printing
 
-Demo mode retains `POST /print` with `{ "labels": [{ "name": "Product name", "barcode": "MSM-..." }] }` and an optional `X-Api-Key`, using your separately supplied local print service. Hosted printing is disabled, including automatic printing during receipt. A public HTTPS page and a local HTTP printer service need a secure integration; do not expose the local service publicly. Implement an authenticated job queue and a trusted local agent, with server checks limiting job creation to administrators/managers, before enabling hosted printing.
+Hosted label jobs travel through the authenticated Supabase queue, so signed-in staff can print from phones and computers anywhere with internet access. No browser device talks directly to the printer PC, and the printer agent makes only outbound HTTPS requests; do not open router ports or expose the local HTTP bridge publicly. Active staff can enqueue up to 100 validated labels per job. Administrators create and revoke printer agents under **Team & access**.
+
+To connect a Windows printer: pair a server in Maxwell as an administrator, download the Windows x64 printer-server package from the repository build artifacts, and run `Start-Maxwell-Printer-Server.bat` on the PC connected to the ZPL printer. On first launch, enter the Supabase project URL, the publishable key (`sb_publishable_…`), the one-time token shown by Maxwell, and the printer queue. The agent encrypts its token with Windows DPAPI for that Windows account. Never enter a Supabase secret/service-role key. Keep the agent window open and the PC online. The web page shows whether each paired agent is currently connected; jobs selected for an offline agent stay queued until it reconnects.
+
+The agent RPC token is scoped to validating, claiming, and completing jobs for its own paired server; the agent does not get an inventory session or database secret. Administrators can revoke a lost token by disabling that server. Queue operations and token checks are enforced in the database, not just in the webpage. The queue retries a job after an agent crash and stops after three attempts; if the printer accepted a job just before the agent lost connection, a retry can produce duplicate labels. The demo retains its local printer bridge and Browser Print/PDF fallback. Labels require a printer queue configured for raw ZPL; a successful Windows spooler submission does not confirm that paper physically came out.
 
 ## Improvements to prioritize
 
 1. **Before staff rollout:** deploy to staging, test real Supabase sessions with all three roles, configure backups and test restores, and add monitoring/alerts. Verify the role matrix against the business's approval rules.
-2. **Printing:** secure print-job queue, local agent, retry/status tracking and actual printer testing.
+2. **Printing:** add operator-facing job history, cancellation and manual retry controls; verify real printers and Windows drivers in each deployment.
 3. **Account lifecycle:** administrator invitations, password reset/change, MFA, and session/device management. No browser-stored printer secrets for production.
 4. **Reliability:** idempotency keys for receiving/catalogue writes. If a network failure loses the response after commit, refresh and inspect records before retrying to avoid duplicate intake. Add live updates and stale-data indicators; currently changes reload after writes or with Refresh.
 5. **Scale:** move filtering, dashboard aggregations and exports to server queries. Reads currently fetch all authorized rows in 500-row pages to avoid silent truncation, but large inventories will be slow and multi-query snapshots can momentarily differ during concurrent updates.

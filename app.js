@@ -1,4 +1,4 @@
-import { hosted, client, command, snapshot, configurationError } from './backend.js';
+import { hosted, client, command, snapshot, configurationError, listPrintAgents, createPrintAgent, setPrintAgentActive, enqueuePrintJob } from './backend.js';
 import {
   permissions,
   transitions,
@@ -640,6 +640,13 @@ function renderTeam() {
           .join('')}
       </div>
     </section>
+    ${hosted && access().team ? `<section class="panel" style="margin-top:18px;">
+      <div class="panel-head">
+        <div><h3>Remote printer servers</h3><p>Pair a Windows computer that stays online with its label printer.</p></div>
+        <button class="btn secondary" data-action="create-printer-agent">Add printer server</button>
+      </div>
+      <div id="print-agent-list"><p class="muted">Loading printer servers…</p></div>
+    </section>` : ''}
     <div class="role-reference">
       <div>
         <strong>Administrator</strong>
@@ -657,6 +664,110 @@ function renderTeam() {
   );
 }
 
+async function loadPrintAgentPanel() {
+  const panel = $('#print-agent-list');
+  if (!panel) return;
+  try {
+    const agents = await listPrintAgents();
+    const rows = (agents || []).map(agent => `<div class="member">
+      <span class="avatar">${icon('printer')}</span>
+      <div class="member-info"><strong>${esc(agent.name)}</strong><span>${agent.online ? 'Connected to Supabase' : 'Not currently connected'}</span></div>
+      <div class="member-badges">${agent.online ? '<span class="badge available">Online</span>' : '<span class="badge inactive">Offline</span>'}
+        ${agent.active ? `<button class="text-button danger" data-action="disable-printer-agent" data-id="${esc(agent.id)}">Disable</button>` : ''}
+      </div>
+    </div>`).join('');
+    panel.innerHTML = rows || '<p class="muted">No printer servers paired yet. Add the Windows computer connected to your label printer.</p>';
+  } catch (error) {
+    panel.innerHTML = `<p class="notice error">${esc(errorMessage(error))}</p>`;
+  }
+}
+
+function createPrinterAgentDialog() {
+  openDialog('Add printer server', 'REMOTE PRINTING', `<p class="dialog-description">Give the Windows computer a clear name. Maxwell will generate a one-time pairing token for its printer agent.</p>
+    <form class="form-grid" id="print-agent-form">
+      ${field('Printer server name', 'printAgentName', '<input name="name" maxlength="100" placeholder="Warehouse label PC" required />', true)}
+      ${formActions('Create pairing token')}
+    </form>`);
+  const form = $('#print-agent-form', dialog);
+  if (!form) return;
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const buttonEl = $('button[type="submit"]', form);
+    buttonEl.disabled = true;
+    buttonEl.textContent = 'Creating…';
+    try {
+      const agent = await createPrintAgent(new FormData(form).get('name').trim());
+      openDialog('Pair your Windows printer server', 'ONE-TIME TOKEN', `<p class="dialog-description">Copy this token now and paste it into the printer server setup on the Windows computer. Maxwell stores only a hash; this token cannot be shown again.</p>
+        <label for="print-agent-token">Pairing token</label>
+        <textarea id="print-agent-token" rows="3" readonly spellcheck="false">${esc(agent.token)}</textarea>
+        <p class="notice" style="margin-top:12px;">The printer computer also needs the Supabase project URL and publishable key. Never enter a Supabase secret key here.</p>
+        <div class="form-actions"><button type="button" class="btn secondary" data-action="cancel">Done</button><button type="button" class="btn primary" id="copy-print-agent-token">Copy token</button></div>`);
+      $('#copy-print-agent-token', dialog)?.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(agent.token); toast('Pairing token copied.'); }
+        catch { $('#print-agent-token', dialog)?.select(); toast('Select and copy the token.'); }
+      });
+      loadPrintAgentPanel();
+    } catch (error) {
+      showError(errorMessage(error));
+      buttonEl.disabled = false;
+      buttonEl.textContent = 'Create pairing token';
+    }
+  };
+}
+
+async function disablePrinterAgent(id) {
+  try {
+    await setPrintAgentActive(id, false);
+    toast('Printer server disabled. Its token can no longer access the queue.');
+    loadPrintAgentPanel();
+  } catch (error) {
+    showError(errorMessage(error));
+  }
+}
+
+async function loadRemotePrintPanel(units) {
+  const panel = $('#remote-print-panel', dialog);
+  if (!panel) return;
+  try {
+    const agents = (await listPrintAgents() || []).filter(agent => agent.active);
+    if (!agents.length) {
+      panel.innerHTML = `<p><strong>No printer server is paired.</strong></p><p class="muted" style="margin-top:6px;">Ask an administrator to add the Windows printer computer in Team & access. The computer must stay connected to the internet.</p>`;
+      return;
+    }
+    panel.innerHTML = `<div class="field"><label for="remote-print-agent-select">Printer location</label>
+      <select id="remote-print-agent-select">${agents.map(agent => `<option value="${esc(agent.id)}">${esc(agent.name)} — ${agent.online ? 'online' : 'offline; job will wait'}</option>`).join('')}</select></div>
+      <p class="muted" style="margin-top:8px;">Print from this device through the cloud. Jobs remain queued until the selected printer server reconnects.</p>
+      <div class="form-actions" style="margin-top:12px;"><button type="button" class="btn secondary" id="queue-remote-print">${icon('printer')}Send to printer</button></div>
+      <p id="remote-print-feedback" class="notice" role="status" aria-live="polite" hidden></p>`;
+    $('#queue-remote-print', panel)?.addEventListener('click', async event => {
+      const buttonEl = event.currentTarget;
+      const agentId = $('#remote-print-agent-select', panel)?.value;
+      if (!agentId) return;
+      buttonEl.disabled = true;
+      buttonEl.textContent = 'Queueing…';
+      const feedback = $('#remote-print-feedback', panel);
+      try {
+        const labels = units.map(unit => ({ name: product(unit.productId)?.name || 'Stock item', barcode: unit.code }));
+        const copies = Math.max(1, Math.min(20, Number($('#sticker-copies-input', dialog)?.value) || 1));
+        if (labels.length * copies > 100) throw new Error('The remote printer supports up to 100 labels per job. Reduce the copies or split the batch.');
+        const job = await enqueuePrintJob(agentId, Array.from({ length: copies }, () => labels).flat());
+        if (feedback) {
+          feedback.hidden = false;
+          feedback.textContent = `Queued ${labels.length * copies} label${labels.length * copies === 1 ? '' : 's'} (job ${job.id.slice(0, 8)}). The printer server will print when it is online.`;
+        }
+        buttonEl.textContent = 'Queued';
+        toast('Print job queued for the selected printer server.');
+      } catch (error) {
+        showError(errorMessage(error));
+        buttonEl.disabled = false;
+        buttonEl.innerHTML = `${icon('printer')}Retry print job`;
+      }
+    });
+  } catch (error) {
+    panel.innerHTML = `<p class="notice error">Could not load printer servers: ${esc(errorMessage(error))}</p>`;
+  }
+}
+
 function renderPage() {
   if (!user) return;
   if (!canView(page)) page = 'overview';
@@ -667,6 +778,7 @@ function renderPage() {
     activity: renderActivity,
     team: renderTeam
   }[page]();
+  if (hosted && page === 'team' && access().team) loadPrintAgentPanel();
 
   $('#breadcrumb-page').textContent = pages[page][0];
   document.title = `${pages[page][0]} · Maxwell Inventory`;
@@ -848,19 +960,21 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
     <div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
       <span class="eyebrow">Label Output</span>
       <span class="badge" id="print-server-status" style="font-size:11px;">
-        ○ Printer server not connected
+        ${hosted ? 'Secure remote printing' : '○ Printer server not connected'}
       </span>
     </div>
     <p class="dialog-description">
       ${isBatch ? `Ready to print labels for <strong>${units.length} physical units</strong>.` : `Standard thermal barcode sticker with scannable QR code for <strong>${esc(units[0].code)}</strong>.`}
-      Supports direct thermal ZPL printing (Port 5001) as well as native browser print.
+      ${hosted ? 'Queue direct thermal labels to a printer server from any signed-in device, or use Browser Print / PDF.' : 'Supports direct thermal ZPL printing (Port 5001) as well as native browser print.'}
     </p>
-    <div id="thermal-printer-choice" class="field" style="display:none;margin:12px 0;">
+    ${hosted ? `<div id="remote-print-panel" class="panel" style="margin:12px 0;padding:16px;">
+      <p class="muted">Loading remote printer servers…</p>
+    </div>` : `<div id="thermal-printer-choice" class="field" style="display:none;margin:12px 0;">
       <label for="thermal-printer-select">Printer for direct thermal labels</label>
       <select id="thermal-printer-select">
         <option value="">Use Windows default printer</option>
       </select>
-    </div>
+    </div>`}
     <div class="print-preview-box">
       <div class="print-preview-list" id="preview-stickers-list">
         ${initialPreview}
@@ -886,12 +1000,12 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
       )}
       <div class="form-actions" style="flex-wrap:wrap;">
         <button type="button" class="btn secondary" data-action="cancel">Close</button>
-        <button type="button" class="btn secondary" id="connect-print-server-btn">
+        ${hosted ? '' : `<button type="button" class="btn secondary" id="connect-print-server-btn">
           Connect to Printer Server
         </button>
         <button type="button" class="btn secondary" id="send-direct-thermal-btn" style="display:none;">
           ${icon('printer')}Direct Thermal (Port 5001)
-        </button>
+        </button>`}
         <button type="submit" class="btn primary">${icon('printer')}Browser Print / PDF</button>
       </div>
     </form>
@@ -914,6 +1028,7 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
   const directBtn = $('#send-direct-thermal-btn', dialog);
   const printerChoice = $('#thermal-printer-choice', dialog);
   const printerSelect = $('#thermal-printer-select', dialog);
+  if (hosted) loadRemotePrintPanel(units);
 
   if (connectBtn) {
     connectBtn.onclick = async () => {
@@ -963,7 +1078,7 @@ async function openStickerPrinter(units, title = 'Print Sticker') {
     };
   }
 
-  if (directBtn) {
+  if (!hosted && directBtn) {
     directBtn.onclick = async () => {
       directBtn.disabled = true;
       const origText = directBtn.innerHTML;
@@ -1660,6 +1775,8 @@ async function onAction(event) {
   if (action === 'unit') unitModal(id);
   if (action === 'confirm-transition') confirmTransition(id, status);
   if (action === 'access') accessModal(id);
+  if (action === 'create-printer-agent') createPrinterAgentDialog();
+  if (action === 'disable-printer-agent') disablePrinterAgent(id);
   if (action === 'camera') startCamera();
   if (action === 'export') exportActivity();
   if (action === 'print-unit-sticker' && id) {

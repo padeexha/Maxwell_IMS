@@ -3,6 +3,11 @@ import http.server
 import json
 import subprocess
 import os
+import time
+import getpass
+import urllib.error
+import urllib.request
+from pathlib import Path
 import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
@@ -246,7 +251,14 @@ def get_default_printer():
 
 
 def send_raw_to_printer(printer, zpl):
-    """Send raw ZPL bytes through the platform's native print spooler."""
+    """Send raw ZPL bytes through a network socket, Windows spooler, or CUPS."""
+    if ':' in printer or (printer.replace('.', '').isdigit() and printer.count('.') == 3):
+        import socket
+        host = printer.split(':')[0]
+        port = int(printer.split(':')[1]) if ':' in printer else 9100
+        with socket.create_connection((host, port), timeout=10) as connection:
+            connection.sendall(zpl.encode("utf-8"))
+        return
     if os.name == "nt":
         import win32print
         handle = win32print.OpenPrinter(printer)
@@ -269,6 +281,129 @@ def send_raw_to_printer(printer, zpl):
                           capture_output=True, timeout=10)
     if proc.returncode != 0:
         raise RuntimeError("lpr error: " + proc.stderr.decode(errors="replace"))
+
+
+def _agent_config_path():
+    root = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return Path(root) / "Maxwell Printer Server" / "agent-config.bin"
+
+
+def _protect_agent_config(config):
+    if os.name != "nt":
+        raise RuntimeError("Cloud printer-agent configuration is supported on Windows only.")
+    import win32crypt
+    raw = json.dumps(config).encode("utf-8")
+    return win32crypt.CryptProtectData(raw, "Maxwell Printer Server", None, None, None, 0)[1]
+
+
+def _unprotect_agent_config(blob):
+    if os.name != "nt":
+        raise RuntimeError("Cloud printer-agent configuration is supported on Windows only.")
+    import win32crypt
+    _, raw = win32crypt.CryptUnprotectData(blob, None, None, None, 0)
+    return json.loads(raw.decode("utf-8"))
+
+
+def _cloud_rpc(config, function_name, parameters):
+    url = config["supabase_url"].rstrip("/") + "/rest/v1/rpc/" + function_name
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(parameters).encode("utf-8"),
+        headers={"apikey": config["publishable_key"], "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(f"Supabase request failed (HTTP {error.code}): {detail}") from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(f"Could not reach Supabase: {error.reason}") from error
+    return json.loads(body) if body else None
+
+
+def _configure_cloud_agent():
+    if os.name != "nt":
+        raise RuntimeError("Run this setup on the Windows computer connected to the printer.")
+    print("\nMaxwell remote printer setup")
+    print("Enter the project URL and publishable key from Supabase Project Settings > API Keys.")
+    supabase_url = input("Supabase project URL: ").strip().rstrip("/")
+    publishable_key = input("Supabase publishable key: ").strip()
+    token = getpass.getpass("One-time pairing token from Maxwell: ").strip()
+    if not supabase_url.startswith("https://"):
+        raise ValueError("The Supabase project URL must start with https://")
+    if not publishable_key.startswith("sb_publishable_"):
+        raise ValueError("Use the Supabase publishable key (sb_publishable_…), not a secret key.")
+    if len(token) != 64:
+        raise ValueError("The printer server token must contain 64 characters.")
+    config = {"supabase_url": supabase_url, "publishable_key": publishable_key, "agent_token": token}
+    identity = _cloud_rpc(config, "validate_print_agent", {"p_token": token})
+    printers = get_installed_printers()
+    default = get_default_printer()
+    print(f"Paired as: {identity['name']}")
+    if printers:
+        print("Installed printers:")
+        for index, name in enumerate(printers, 1):
+            print(f"  {index}. {name}" + (" (Windows default)" if name == default else ""))
+        choice = input("Printer number, or Enter to use Windows default: ").strip()
+        if choice:
+            if not choice.isdigit() or not (1 <= int(choice) <= len(printers)):
+                raise ValueError("Choose one of the listed printer numbers.")
+            config["printer"] = printers[int(choice) - 1]
+        else:
+            config["printer"] = default
+    else:
+        config["printer"] = ""
+        print("No Windows printer queues were found. Add and configure the printer in Windows Settings first.")
+    path = _agent_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_protect_agent_config(config))
+    print(f"Setup saved securely for this Windows account: {path}")
+    return config
+
+
+def run_cloud_print_agent():
+    if os.name != "nt":
+        raise RuntimeError("The remote printer agent runs on Windows only.")
+    path = _agent_config_path()
+    config = _unprotect_agent_config(path.read_bytes()) if path.exists() else _configure_cloud_agent()
+    identity = _cloud_rpc(config, "validate_print_agent", {"p_token": config["agent_token"]})
+    printer = config.get("printer") or get_default_printer()
+    if not printer:
+        raise RuntimeError("No default printer is set. Set the ZPL printer as the Windows default, then restart this agent.")
+    print(f"Connected to Maxwell as {identity['name']}.")
+    print(f"Printer: {printer}")
+    print("Waiting for print jobs. Keep this window open; Ctrl+C stops the remote printer server.")
+    while True:
+        try:
+            job = _cloud_rpc(config, "claim_print_job", {"p_token": config["agent_token"]})
+            if not job:
+                time.sleep(2)
+                continue
+            print(f"Printing job {job['id'][:8]} ({len(job['labels'])} labels)…")
+            try:
+                validate_labels(job["labels"])
+                zpl = build_zpl_from_labels(job["labels"])
+                send_raw_to_printer(printer, zpl)
+                _cloud_rpc(config, "finish_print_job", {
+                    "p_token": config["agent_token"], "p_job_id": job["id"], "p_success": True, "p_error": ""
+                })
+                print(f"Job {job['id'][:8]} sent to {printer}.")
+            except Exception as error:
+                try:
+                    _cloud_rpc(config, "finish_print_job", {
+                        "p_token": config["agent_token"], "p_job_id": job["id"], "p_success": False, "p_error": str(error)[:500]
+                    })
+                except Exception as completion_error:
+                    print(f"Could not report job result: {completion_error}")
+                print(f"Print job {job['id'][:8]} failed: {error}")
+        except KeyboardInterrupt:
+            print("\nStopping remote printer server…")
+            return
+        except Exception as error:
+            print(f"Cloud connection issue: {error}")
+            time.sleep(5)
 
 
 class PrintServerHandler(http.server.BaseHTTPRequestHandler):
@@ -523,11 +658,15 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description="Print Server Bridge")
+    parser.add_argument("--agent", action="store_true", help="Run the Windows cloud print agent instead of the local HTTP bridge")
     parser.add_argument("--host", default=os.environ.get("PRINT_SERVER_HOST", "127.0.0.1"), help="Host to bind server to (loopback only by default)")
     parser.add_argument("--allowed-origin", action="append", default=None, help="Browser origin allowed to access the local print bridge; repeat to add another")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PRINT_SERVER_PORT", PORT)), help="Port to bind server to")
     parser.add_argument("--api-key", default=os.environ.get("PRINT_SERVER_API_KEY", ""), help="API key required for printing")
     args = parser.parse_args()
+    if args.agent:
+        run_cloud_print_agent()
+        raise SystemExit(0)
 
     PrintServerHandler.api_key = args.api_key
     configured_origins = args.allowed_origin or os.environ.get("PRINT_SERVER_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS.split(","))
