@@ -1,4 +1,4 @@
-import { hosted, client, command, snapshot, configurationError, listPrintAgents, createPrintAgent, setPrintAgentActive, enqueuePrintJob } from './backend.js';
+import { hosted, client, command, snapshot, configurationError, listPrintAgents, createPrintAgent, setPrintAgentActive, deletePrintAgent, enqueuePrintJob } from './backend.js';
 import {
   permissions,
   transitions,
@@ -674,6 +674,7 @@ async function loadPrintAgentPanel() {
       <div class="member-info"><strong>${esc(agent.name)}</strong><span>${agent.online ? 'Connected to Supabase' : 'Not currently connected'}</span></div>
       <div class="member-badges">${agent.online ? '<span class="badge available">Online</span>' : '<span class="badge inactive">Offline</span>'}
         ${agent.active ? `<button class="text-button danger" data-action="disable-printer-agent" data-id="${esc(agent.id)}">Disable</button>` : ''}
+        <button class="text-button danger" data-action="confirm-delete-printer-agent" data-id="${esc(agent.id)}" data-name="${esc(agent.name)}">Delete</button>
       </div>
     </div>`).join('');
     panel.innerHTML = rows || '<p class="muted">No printer servers paired yet. Add the Windows computer connected to your label printer.</p>';
@@ -719,6 +720,22 @@ async function disablePrinterAgent(id) {
   try {
     await setPrintAgentActive(id, false);
     toast('Printer server disabled. Its token can no longer access the queue.');
+    loadPrintAgentPanel();
+  } catch (error) {
+    showError(errorMessage(error));
+  }
+}
+
+function confirmDeletePrinterAgent(id, name) {
+  openDialog('Delete printer server', 'REMOVE PRINTER', `<p class="dialog-description">Delete <strong>${esc(name || 'this printer server')}</strong>? This revokes its pairing token and permanently removes its print queue and job history. This cannot be undone.</p>
+    <div class="form-actions"><button type="button" class="btn subtle" data-action="cancel">Cancel</button><button type="button" class="btn danger" data-action="delete-printer-agent" data-id="${esc(id)}">Delete printer server</button></div>`);
+}
+
+async function deletePrinterAgent(id) {
+  try {
+    await deletePrintAgent(id);
+    closeDialog();
+    toast('Printer server and its print jobs were deleted.');
     loadPrintAgentPanel();
   } catch (error) {
     showError(errorMessage(error));
@@ -1777,6 +1794,8 @@ async function onAction(event) {
   if (action === 'access') accessModal(id);
   if (action === 'create-printer-agent') createPrinterAgentDialog();
   if (action === 'disable-printer-agent') disablePrinterAgent(id);
+  if (action === 'confirm-delete-printer-agent') confirmDeletePrinterAgent(id, target.dataset.name);
+  if (action === 'delete-printer-agent') deletePrinterAgent(id);
   if (action === 'camera') startCamera();
   if (action === 'export') exportActivity();
   if (action === 'print-unit-sticker' && id) {

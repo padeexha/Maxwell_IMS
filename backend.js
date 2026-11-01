@@ -50,4 +50,5 @@ async function rpc(name, params = {}) {
 export const listPrintAgents = () => rpc('list_print_agents');
 export const createPrintAgent = name => rpc('create_print_agent', { p_name: name });
 export const setPrintAgentActive = (id, active) => rpc('set_print_agent_active', { p_agent_id: id, p_active: active });
+export const deletePrintAgent = id => rpc('delete_print_agent', { p_agent_id: id });
 export const enqueuePrintJob = (agentId, labels) => rpc('enqueue_print_job', { p_agent_id: agentId, p_labels: labels });

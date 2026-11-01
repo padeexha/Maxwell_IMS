@@ -5,6 +5,7 @@ import subprocess
 import os
 import time
 import getpass
+import traceback
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -367,7 +368,18 @@ def run_cloud_print_agent():
     if os.name != "nt":
         raise RuntimeError("The remote printer agent runs on Windows only.")
     path = _agent_config_path()
-    config = _unprotect_agent_config(path.read_bytes()) if path.exists() else _configure_cloud_agent()
+    if path.exists():
+        try:
+            config = _unprotect_agent_config(path.read_bytes())
+        except Exception as error:
+            raise RuntimeError(
+                "The saved printer settings cannot be unlocked for this Windows account. "
+                "Run the agent as the Windows account that paired it. If that account changed, "
+                "ask an administrator to disable and remove this printer server, delete "
+                f"{path}, then pair it again."
+            ) from error
+    else:
+        config = _configure_cloud_agent()
     identity = _cloud_rpc(config, "validate_print_agent", {"p_token": config["agent_token"]})
     printer = config.get("printer") or get_default_printer()
     if not printer:
@@ -655,7 +667,7 @@ class PrintServerHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-if __name__ == '__main__':
+def main():
     import argparse
     parser = argparse.ArgumentParser(description="Print Server Bridge")
     parser.add_argument("--agent", action="store_true", help="Run the Windows cloud print agent instead of the local HTTP bridge")
@@ -664,28 +676,43 @@ if __name__ == '__main__':
     parser.add_argument("--port", type=int, default=int(os.environ.get("PRINT_SERVER_PORT", PORT)), help="Port to bind server to")
     parser.add_argument("--api-key", default=os.environ.get("PRINT_SERVER_API_KEY", ""), help="API key required for printing")
     args = parser.parse_args()
-    if args.agent:
-        run_cloud_print_agent()
-        raise SystemExit(0)
-
-    PrintServerHandler.api_key = args.api_key
-    configured_origins = args.allowed_origin or os.environ.get("PRINT_SERVER_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS.split(","))
-    if isinstance(configured_origins, str):
-        configured_origins = configured_origins.split(",")
-    PrintServerHandler.allowed_origins = {origin.strip().rstrip("/") for origin in configured_origins if origin.strip()}
-
-    print(f"Starting print server bridge on {args.host}:{args.port}...")
-    print("Allowed browser origins: " + ", ".join(sorted(PrintServerHandler.allowed_origins)))
-    if args.api_key:
-        print("API Key Authentication is ENABLED.")
-    else:
-        print("WARNING: API Key Authentication is DISABLED. Anyone can print!")
-    print("Press Ctrl+C to stop.")
-    
-    server = http.server.ThreadingHTTPServer((args.host, args.port), PrintServerHandler)
     try:
-        server.serve_forever()
+        args = parser.parse_args()
+        if args.agent:
+            run_cloud_print_agent()
+            return 0
+
+        PrintServerHandler.api_key = args.api_key
+        configured_origins = args.allowed_origin or os.environ.get("PRINT_SERVER_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS.split(","))
+        if isinstance(configured_origins, str):
+            configured_origins = configured_origins.split(",")
+        PrintServerHandler.allowed_origins = {origin.strip().rstrip("/") for origin in configured_origins if origin.strip()}
+
+        print(f"Starting print server bridge on {args.host}:{args.port}...")
+        print("Allowed browser origins: " + ", ".join(sorted(PrintServerHandler.allowed_origins)))
+        if args.api_key:
+            print("API Key Authentication is ENABLED.")
+        else:
+            print("WARNING: API Key Authentication is DISABLED. Anyone can print!")
+        print("Press Ctrl+C to stop.")
+
+        server = http.server.ThreadingHTTPServer((args.host, args.port), PrintServerHandler)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nStopping print server bridge...")
+        finally:
+            server.server_close()
+        return 0
     except KeyboardInterrupt:
-        print("\nStopping print server bridge...")
-    finally:
-        server.server_close()
+        print("\nPrinter server stopped.")
+        return 0
+    except Exception as error:
+        print(f"\nPrinter server could not start: {error}")
+        print("Diagnostic traceback:")
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

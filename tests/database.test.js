@@ -14,6 +14,7 @@ test('database authorization, validation, atomic receiving and audit integrity',
  await db.exec(await readFile(new URL('../supabase/migrations/202610300002_auto_profile_trigger.sql',import.meta.url),'utf8'));
  await db.exec(await readFile(new URL('../supabase/migrations/202611010001_remote_print_queue.sql',import.meta.url),'utf8'));
  await db.exec(await readFile(new URL('../supabase/migrations/202611010002_print_queue_active_staff_policy.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../supabase/migrations/202611010003_delete_printer_agent.sql',import.meta.url),'utf8'));
  const ids=['00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000004'];
  for(let i=0;i<4;i++){
   await db.query('insert into auth.users (id, email) values ($1, $2)',[ids[i], `staff${i}@example.com`]);
@@ -99,5 +100,11 @@ test('database authorization, validation, atomic receiving and audit integrity',
  await as(2);await denied('transition',{id:unit.id,status:'Sold',version:5});
  assert.equal((await db.query('select * from public.print_jobs')).rows.length,0,'inactive staff can no longer read queued print jobs');
  assert.equal((await db.query('select * from public.units')).rows.length,0);
+ await db.exec('reset role');
+ await as(2);await assert.rejects(()=>db.query('select public.delete_print_agent($1)',[createdAgent.id]));
+ await as(1);await assert.rejects(()=>db.query('select public.delete_print_agent($1)',[createdAgent.id]));
+ await as(0);await db.query('select public.delete_print_agent($1)',[createdAgent.id]);await db.exec('reset role');
+ assert.equal((await db.query('select * from public.printer_agents where id=$1',[createdAgent.id])).rows.length,0,'admin can delete printer server');
+ assert.equal((await db.query('select * from public.print_jobs where agent_id=$1',[createdAgent.id])).rows.length,0,'deleting printer server removes its job history');
  await db.close();
 });
