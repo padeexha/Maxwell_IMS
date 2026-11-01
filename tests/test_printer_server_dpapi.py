@@ -1,4 +1,5 @@
 import json
+import ssl
 import sys
 import unittest
 from pathlib import Path
@@ -21,6 +22,11 @@ class FakeWin32Crypt:
 
 
 class PrinterServerDpapiTests(unittest.TestCase):
+    def test_supabase_tls_uses_ca_bundle_and_verifies_certificates(self):
+        context = print_server._tls_context()
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+
     def test_pairing_token_prompt_accepts_pasted_hex_and_reports_bad_length(self):
         token = "a1" * 32
         with patch("builtins.input", return_value=f"  {token}  "):

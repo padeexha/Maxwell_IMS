@@ -16,3 +16,5 @@ SETUP
 The pairing token is stored encrypted with Windows DPAPI for the current Windows account. To revoke it, use Disable or Delete beside the printer server in Team & access. To change the selected printer, remove %APPDATA%\Maxwell Printer Server\agent-config.bin and restart setup. This package needs no Python installation and supports 64-bit Windows 10/11.
 
 Jobs submitted while the agent is offline remain queued until it reconnects. A Windows print-spooler success means the job was accepted by the queue; verify the printer has labels loaded and is configured for ZPL.
+
+If setup reports a TLS certificate verification error, check the Windows date/time and whether antivirus or a managed network intercepts HTTPS. The agent uses a bundled public CA list and never disables certificate validation.

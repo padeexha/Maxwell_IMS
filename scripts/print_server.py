@@ -5,10 +5,12 @@ import subprocess
 import os
 import time
 import re
+import ssl
 import traceback
 import urllib.error
 import urllib.request
 from pathlib import Path
+import certifi
 import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
@@ -316,14 +318,29 @@ def _cloud_rpc(config, function_name, parameters):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=20, context=_tls_context()) as response:
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")[:500]
         raise RuntimeError(f"Supabase request failed (HTTP {error.code}): {detail}") from error
     except urllib.error.URLError as error:
+        if isinstance(error.reason, ssl.SSLCertVerificationError):
+            raise RuntimeError(
+                "TLS certificate verification failed while connecting to Supabase. "
+                "Check the Windows date and time, and make sure the network or antivirus "
+                "is not replacing HTTPS certificates. Certificate checks remain enabled."
+            ) from error
         raise RuntimeError(f"Could not reach Supabase: {error.reason}") from error
     return json.loads(body) if body else None
+
+
+def _tls_context():
+    # Bundle Mozilla's public CA roots so frozen Windows builds do not depend on
+    # an unavailable OpenSSL CA path. Hostname and certificate validation stay on.
+    context = ssl.create_default_context(cafile=certifi.where())
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    return context
 
 
 def _read_pairing_token():
