@@ -4,7 +4,7 @@ import json
 import subprocess
 import os
 import time
-import getpass
+import re
 import traceback
 import urllib.error
 import urllib.request
@@ -326,6 +326,16 @@ def _cloud_rpc(config, function_name, parameters):
     return json.loads(body) if body else None
 
 
+def _read_pairing_token():
+    token = input("Paste the 64-character pairing token from Maxwell (visible): ").strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", token):
+        raise ValueError(
+            f"Read {len(token)} characters; expected exactly 64 hexadecimal characters. "
+            "Copy the token again from Maxwell's Add printer server dialog and paste it here."
+        )
+    return token
+
+
 def _configure_cloud_agent():
     if os.name != "nt":
         raise RuntimeError("Run this setup on the Windows computer connected to the printer.")
@@ -333,13 +343,11 @@ def _configure_cloud_agent():
     print("Enter the project URL and publishable key from Supabase Project Settings > API Keys.")
     supabase_url = input("Supabase project URL: ").strip().rstrip("/")
     publishable_key = input("Supabase publishable key: ").strip()
-    token = getpass.getpass("One-time pairing token from Maxwell: ").strip()
+    token = _read_pairing_token()
     if not supabase_url.startswith("https://"):
         raise ValueError("The Supabase project URL must start with https://")
     if not publishable_key.startswith("sb_publishable_"):
         raise ValueError("Use the Supabase publishable key (sb_publishable_…), not a secret key.")
-    if len(token) != 64:
-        raise ValueError("The printer server token must contain 64 characters.")
     config = {"supabase_url": supabase_url, "publishable_key": publishable_key, "agent_token": token}
     identity = _cloud_rpc(config, "validate_print_agent", {"p_token": token})
     printers = get_installed_printers()

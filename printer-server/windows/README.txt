@@ -9,10 +9,10 @@ SETUP
 4. Double-click Start-Maxwell-Printer-Server.bat. On first run, enter:
    - Supabase project URL (Project Settings > API Keys / Connect)
    - Supabase publishable key (starts with sb_publishable_; never use a secret/service-role key)
-   - The one-time pairing token
+   - Paste the one-time pairing token at the visible token prompt. It must be exactly 64 hexadecimal characters; the prompt reports how many characters it received if the paste is incomplete.
    - The installed printer number, or press Enter for the Windows default
 5. Leave the server window open. It will show when it connects and when it sends a job. Other signed-in staff can now choose this printer server in the webpage and queue labels from phones or computers anywhere with internet access.
 
-The pairing token is stored encrypted with Windows DPAPI for the current Windows account. To revoke it, use Disable beside the printer server in Team & access. To change the selected printer, remove %APPDATA%\Maxwell Printer Server\agent-config.bin and restart setup. This package needs no Python installation and supports 64-bit Windows 10/11.
+The pairing token is stored encrypted with Windows DPAPI for the current Windows account. To revoke it, use Disable or Delete beside the printer server in Team & access. To change the selected printer, remove %APPDATA%\Maxwell Printer Server\agent-config.bin and restart setup. This package needs no Python installation and supports 64-bit Windows 10/11.
 
 Jobs submitted while the agent is offline remain queued until it reconnects. A Windows print-spooler success means the job was accepted by the queue; verify the printer has labels loaded and is configured for ZPL.
