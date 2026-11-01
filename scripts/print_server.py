@@ -294,7 +294,9 @@ def _protect_agent_config(config):
         raise RuntimeError("Cloud printer-agent configuration is supported on Windows only.")
     import win32crypt
     raw = json.dumps(config).encode("utf-8")
-    return win32crypt.CryptProtectData(raw, "Maxwell Printer Server", None, None, None, 0)[1]
+    # pywin32 CryptProtectData returns the encrypted payload as bytes directly;
+    # only CryptUnprotectData returns (description, payload).
+    return win32crypt.CryptProtectData(raw, "Maxwell Printer Server", None, None, None, 0)
 
 
 def _unprotect_agent_config(blob):
